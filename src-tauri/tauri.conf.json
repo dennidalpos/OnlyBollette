@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OnlyBollette",
+  "version": "0.1.0",
+  "identifier": "it.onlybollette.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "OnlyBollette",
+        "width": 1180,
+        "height": 820,
+        "minWidth": 720,
+        "minHeight": 600,
+        "backgroundColor": "#171f23"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "resources": {
+      "resources/runtime/": "resources/runtime/",
+      "../docs/licenses/": "licenses/",
+      "../docs/THIRD-PARTY-NOTICES.md": "licenses/THIRD-PARTY-NOTICES.md"
+    },
+    "shortDescription": "Confronta offerte da fonti ufficiali",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["Italian"],
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}

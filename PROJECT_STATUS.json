@@ -1,0 +1,48 @@
+{
+  "updatedAt": "2026-09-23",
+  "scope": "Open verification and source-access work. Completed checks are recorded in docs/VERIFICATION.md, not retained here.",
+  "tasks": [
+    {
+      "id": "SOURCE-ALLIANZ-403",
+      "priority": "high",
+      "status": "external",
+      "summary": "Allianz catalog access is intermittent. On 2026-09-23 a fresh native insurance check returned two Allianz products but marked the catalog partial; a subsequent read of the official catalog returned HTTP 403.",
+      "nextStep": "Recheck fresh native access when the official source is available and require a complete catalog. Keep the in-app warning; do not bypass the access challenge or accept a cached or partial snapshot as a live pass."
+    },
+    {
+      "id": "INSTALLER-ACCEPTANCE",
+      "priority": "medium",
+      "status": "pending",
+      "summary": "The 2026-09-23 NSIS installer builds with the offer-refresh blocking UI, but the installed application has not been exercised end to end after the audit, theme, filter and refresh changes.",
+      "nextStep": "Install the current package in an isolated Windows profile or test machine without replacing the user's existing installation. Verify a live offer refresh keeps the UI blocked through partial source results, completion, cancellation and failure; confirm saved offers and warnings remain usable afterward."
+    },
+    {
+      "id": "NETWORK-DISCONNECTION",
+      "priority": "medium",
+      "status": "pending",
+      "summary": "Native behavior across a real network disconnection and recovery is unverified.",
+      "nextStep": "Exercise the installed app in an isolated network environment and check source warnings, cancellation, and recovery."
+    },
+    {
+      "id": "ESTIMATE-PORTAL-PARITY",
+      "priority": "medium",
+      "status": "external",
+      "summary": "The annual electricity estimate has not been compared with a personalized result from Portale Offerte using the same profile.",
+      "nextStep": "Compare a consenting test profile and record any differences in included cost components."
+    },
+    {
+      "id": "PLATFORM-BASELINE",
+      "priority": "low",
+      "status": "external",
+      "summary": "Windows 10 and 8 GB RAM remain unverified as supported environments.",
+      "nextStep": "Run install, retrieval, and local AI checks on those configurations before claiming support."
+    },
+    {
+      "id": "SCRATCH-FAILED-RUN",
+      "priority": "low",
+      "status": "blocked",
+      "summary": "The failed verifier run left .scratch/desktop-check-j13DSt. On 2026-09-23 automatic approval review again rejected recursive removal of this exact directory before execution.",
+      "nextStep": "Remove this exact temporary directory through an approved cleanup path; do not touch other scratch or user data."
+    }
+  ]
+}
