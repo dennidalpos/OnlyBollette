@@ -66,6 +66,15 @@ pub async fn fetch_text(
     url: &str,
     limit: usize,
 ) -> Result<String, String> {
+    String::from_utf8(fetch_bytes(client, url, limit).await?)
+        .map_err(|_| "Codifica del documento non supportata".into())
+}
+
+pub async fn fetch_bytes(
+    client: &reqwest::Client,
+    url: &str,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
     web_url(url)?;
     let mut request = client.get(url);
     if limit > 8_000_000 {
@@ -95,7 +104,7 @@ pub async fn fetch_text(
         }
         bytes.extend_from_slice(&chunk);
     }
-    String::from_utf8(bytes).map_err(|_| "Codifica del documento non supportata".into())
+    Ok(bytes)
 }
 
 fn selector(value: &str) -> Selector {

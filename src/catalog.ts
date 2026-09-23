@@ -110,6 +110,24 @@ export interface OfferFilters {
   sort: string;
 }
 
+export function priceRangeError(from: string, to: string): string | null {
+  const valid = (value: string) => !value || /^\d+(?:[,.]\d{1,2})?$/.test(value);
+  if (!valid(from) || !valid(to)) return 'Inserisci importi in euro con al massimo due decimali.';
+  const minimum = from ? Number(from.replace(',', '.')) : 0;
+  const maximum = to ? Number(to.replace(',', '.')) : Infinity;
+  if (!Number.isFinite(minimum) || (to && !Number.isFinite(maximum)) || minimum > maximum)
+    return 'Il prezzo minimo deve essere minore o uguale al massimo.';
+  return null;
+}
+
+export function inPriceRange(amount: number | null | undefined, from: string, to: string): boolean {
+  if (!from && !to) return true;
+  if (amount === null || amount === undefined || !Number.isFinite(amount)) return false;
+  const minimum = from ? Number(from.replace(',', '.')) : 0;
+  const maximum = to ? Number(to.replace(',', '.')) : Infinity;
+  return amount >= minimum && amount <= maximum;
+}
+
 export function filterOffers(sources: SourceResult[], filters: OfferFilters): Offer[] {
   const seen = new Set<string>();
   const today = new Date().toLocaleDateString('sv-SE');

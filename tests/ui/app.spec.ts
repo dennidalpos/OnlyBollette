@@ -7,7 +7,17 @@ test('four categories, responsive layout, no account gate', async ({ page }, tes
   await page.screenshot({ path: testInfo.outputPath('home.png'), fullPage: true });
   await page.setViewportSize({ width: 720, height: 600 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(
+    true,
+  );
   await expect(page.getByRole('button', { name: /Assicurazioni Auto/ })).toBeVisible();
+  await page.setViewportSize({ width: 420, height: 600 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(
+    true,
+  );
+  await page.setViewportSize({ width: 320, height: 568 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
 test('browser preview does not present fictitious offers', async ({ page }, testInfo) => {
@@ -37,6 +47,39 @@ test('energy filters allow multiple choices and explain their limits', async ({ 
   await expect(page.locator('.results-guide')).toContainText('Durata prezzo');
   await page.setViewportSize({ width: 420, height: 800 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  for (const width of [320, 420, 720, 1024]) {
+    await page.setViewportSize({ width, height: 600 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    for (const filter of await page.locator('.contract-filters .multi-filter').all()) {
+      await filter.locator('summary').click();
+      const rect = await filter.locator('.multi-filter-menu').boundingBox();
+      expect(rect).not.toBeNull();
+      const label = await filter.locator('summary').innerText();
+      expect(rect!.x, `${width}px ${label}`).toBeGreaterThanOrEqual(0);
+      expect(rect!.x + rect!.width, `${width}px ${label}`).toBeLessThanOrEqual(width + 1);
+      await filter.locator('summary').click();
+    }
+  }
+});
+
+test('price range shows comparable units and validates bounds', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Internet Casa · FWA · Mobile' }).click();
+  await expect(page.getByRole('textbox', { name: 'Prezzo minimo' })).toBeEnabled();
+  await page.getByRole('textbox', { name: 'Prezzo minimo' }).fill('20');
+  await page.getByRole('textbox', { name: 'Prezzo massimo' }).fill('10');
+  await expect(page.locator('.price-filter-error')).toContainText('minimo');
+  await page.getByRole('textbox', { name: 'Prezzo massimo' }).fill('30');
+  await expect(page.locator('.price-filter-error')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancella filtri (1)' })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancella filtri (1)' }).click();
+  await expect(page.getByRole('textbox', { name: 'Prezzo minimo' })).toHaveValue('');
+  await page.getByRole('button', { name: 'Tutte le categorie' }).click();
+  await page.getByRole('button', { name: 'Gas Prezzo fisso · Indicizzato' }).click();
+  await expect(page.getByRole('textbox', { name: 'Prezzo minimo' })).toBeDisabled();
+  await expect(page.locator('.price-filter-note')).toContainText('Portale Offerte');
 });
 
 test('mock native refresh blocks interaction until completion or cancellation is confirmed', async ({
@@ -69,6 +112,16 @@ test('mock native refresh blocks interaction until completion or cancellation is
         if (command === 'model_status')
           return { installed: false, downloading: false, size: 1396198496 };
         if (command === 'cached_offers') return [];
+        if (command === 'provider_directory')
+          return {
+            providers: [
+              { id: '1', name: 'Venditore Uno', website: 'https://example.org/' },
+              { id: '2', name: 'Venditore Due', website: null },
+            ],
+            sourceUrl: 'https://www.arera.it/area-operatori/ricerca-operatori',
+            fetchedAt: new Date().toISOString(),
+            note: 'Venditori nel registro ARERA.',
+          };
         if (command === 'search_offers') {
           requestId = String(args.requestId);
           if (failNextSearch) {
@@ -134,6 +187,11 @@ test('mock native refresh blocks interaction until completion or cancellation is
   await emit(null, true);
   await expect(dialog).toHaveCount(0);
   expect(await page.locator('.app-shell').evaluate((element) => element.inert)).toBe(false);
+  await page.locator('.provider-directory summary').click();
+  await expect(page.locator('.provider-directory li')).toHaveCount(2);
+  await page.getByRole('textbox', { name: 'Cerca operatore' }).fill('Due');
+  await expect(page.locator('.provider-directory li')).toHaveCount(1);
+  await expect(page.locator('.provider-directory li')).toContainText('Venditore Due');
 
   await page.getByRole('button', { name: 'Aggiorna offerte' }).click();
   await expect(dialog).toBeVisible();

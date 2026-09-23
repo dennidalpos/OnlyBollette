@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   filterOffers,
+  inPriceRange,
   mergeSource,
   offerDuration,
   offerMarket,
   offerTariff,
+  priceRangeError,
   sourceStatus,
 } from './catalog';
 import type { OfferFilters } from './catalog';
@@ -54,6 +56,14 @@ const filters = (changes: Partial<OfferFilters> = {}): OfferFilters => ({
 });
 
 describe('catalog integrity', () => {
+  it('filters inclusive comparable prices and rejects invalid bounds', () => {
+    expect(priceRangeError('9,95', '20')).toBeNull();
+    expect(inPriceRange(null, '0', '20')).toBe(false);
+    expect(inPriceRange(9.95, '9,95', '20')).toBe(true);
+    expect(inPriceRange(20.01, '9,95', '20')).toBe(false);
+    expect(priceRangeError('20', '9')).toMatch(/minimo/);
+    expect(priceRangeError('9,999', '')).toMatch(/due decimali/);
+  });
   it('unknown price sorts after known prices, never as free', () => {
     const results = filterOffers(
       [source([offer('unknown', null), offer('expensive', 20), offer('cheap', 5)])],

@@ -1,7 +1,21 @@
 {
   "updatedAt": "2026-09-23",
-  "scope": "Open verification and source-access work. Completed checks are recorded in docs/VERIFICATION.md, not retained here.",
+  "scope": "Open offer coverage, verification and source-access work. Completed checks are recorded in docs/VERIFICATION.md, not retained here.",
   "tasks": [
+    {
+      "id": "OFFER-COVERAGE-BREADTH",
+      "priority": "high",
+      "status": "pending",
+      "summary": "Internet offer retrieval still covers Iliad and Fastweb; insurance product retrieval still covers Bene and Allianz. Official operator registers identify more companies but do not publish a unified catalog of their current offers or personalized prices.",
+      "nextStep": "Add and verify source-specific official offer adapters where public data are accessible. Keep the separate registry directory and current coverage warning; never infer an offer or price from registration alone."
+    },
+    {
+      "id": "SOURCE-AGCOM-DIRECTORY",
+      "priority": "medium",
+      "status": "external",
+      "summary": "The active AGCOM registration endpoint returned 7,220 records in a PowerShell read, but a later native directory request timed out after 45 seconds. The cause is not confirmed.",
+      "nextStep": "Recheck the on-demand directory on a separate session or network. Keep the explicit in-app error and official register link; do not claim the operator directory loaded until a native check succeeds."
+    },
     {
       "id": "SOURCE-ALLIANZ-403",
       "priority": "high",
@@ -13,8 +27,8 @@
       "id": "INSTALLER-ACCEPTANCE",
       "priority": "medium",
       "status": "pending",
-      "summary": "The 2026-09-23 NSIS installer builds with the offer-refresh blocking UI, but the installed application has not been exercised end to end after the audit, theme, filter and refresh changes.",
-      "nextStep": "Install the current package in an isolated Windows profile or test machine without replacing the user's existing installation. Verify a live offer refresh keeps the UI blocked through partial source results, completion, cancellation and failure; confirm saved offers and warnings remain usable afterward."
+      "summary": "The 2026-09-23 NSIS installer predates the latest price-range filters, compact responsive layout and provider directories. Current source checks passed, but this revision has not been packaged and installed end to end.",
+      "nextStep": "Build and install this revision in an isolated Windows profile or test machine without replacing the user's existing installation. Verify low-resolution layout, price filters, provider directory errors and links, and offer refresh through partial results, completion, cancellation and failure. Confirm saved offers and warnings remain usable afterward."
     },
     {
       "id": "NETWORK-DISCONNECTION",

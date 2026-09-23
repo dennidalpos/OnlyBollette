@@ -32,6 +32,7 @@ import type {
   ModelProgress,
   ModelStatus,
   Offer,
+  ProviderDirectory,
   SearchEvent,
   SourceResult,
 } from './types';
@@ -40,6 +41,7 @@ import {
   categoryNames,
   dateTime,
   filterOffers,
+  inPriceRange,
   mergeSource,
   money,
   offerActivation,
@@ -48,6 +50,7 @@ import {
   offerPayment,
   offerTariff,
   priceLabels,
+  priceRangeError,
   sourceStatus,
   subcategories,
 } from './catalog';
@@ -111,8 +114,15 @@ export default function App() {
   const [restrictions, setRestrictions] = useState<string[]>([]);
   const [providers, setProviders] = useState<string[]>([]);
   const [sort, setSort] = useState('provider');
+  const [priceFrom, setPriceFrom] = useState('');
+  const [priceTo, setPriceTo] = useState('');
   const [electricityProfile, setElectricityProfile] = useState<ElectricityProfile | null>(null);
   const [limit, setLimit] = useState(30);
+  const [directories, setDirectories] = useState<Partial<Record<Category, ProviderDirectory>>>({});
+  const [directoryLoading, setDirectoryLoading] = useState<Partial<Record<Category, boolean>>>({});
+  const [directoryErrors, setDirectoryErrors] = useState<Partial<Record<Category, string>>>({});
+  const [directoryQuery, setDirectoryQuery] = useState('');
+  const [directoryLimit, setDirectoryLimit] = useState(40);
   const [selected, setSelected] = useState<Offer | null>(null);
   const [settings, setSettings] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(
@@ -251,8 +261,12 @@ export default function App() {
     setPayments([]);
     setRestrictions([]);
     setSort('provider');
+    setPriceFrom('');
+    setPriceTo('');
     setElectricityProfile(null);
     setLimit(30);
+    setDirectoryQuery('');
+    setDirectoryLimit(40);
     setError('');
     setBusy(true);
     try {
@@ -365,12 +379,24 @@ export default function App() {
       if (estimate) estimates.set(offer.id, estimate);
     }
   }
-  const offers =
+  const rankedOffers =
     category === 'luce' && electricityProfile
       ? [...filteredOffers]
           .filter((offer) => estimates.has(offer.id))
           .sort((a, b) => estimates.get(a.id)!.total - estimates.get(b.id)!.total)
       : filteredOffers;
+  const canFilterPrice = category === 'internet' || (category === 'luce' && !!electricityProfile);
+  const priceError = priceRangeError(priceFrom, priceTo);
+  const offers =
+    canFilterPrice && !priceError
+      ? rankedOffers.filter((offer) =>
+          inPriceRange(
+            category === 'luce' ? estimates.get(offer.id)?.total : offer.monthlyPrice,
+            priceFrom,
+            priceTo,
+          ),
+        )
+      : rankedOffers;
   const allCount = sources.reduce((n, s) => n + s.offers.length, 0);
   const allOffers = sources.flatMap((source) => source.offers);
   const providerOptions = [...new Set(allOffers.map((offer) => offer.provider))]
@@ -405,6 +431,7 @@ export default function App() {
     restrictions,
     providers,
   ].reduce((count, values) => count + values.length, 0);
+  const activeFilterCount = selectedFilterCount + Number(!!priceFrom || !!priceTo);
   const energy = category === 'luce' || category === 'gas';
   const Icon = category ? icons[category] : Zap;
   const selectedStatus = sourceStatus(
@@ -421,7 +448,23 @@ export default function App() {
     setPayments([]);
     setRestrictions([]);
     setProviders([]);
+    setPriceFrom('');
+    setPriceTo('');
     setLimit(30);
+  }
+
+  async function loadDirectory(target: Category) {
+    if (directories[target] || directoryLoading[target]) return;
+    setDirectoryLoading((current) => ({ ...current, [target]: true }));
+    setDirectoryErrors((current) => ({ ...current, [target]: '' }));
+    try {
+      const result = await call<ProviderDirectory>('provider_directory', { category: target });
+      setDirectories((current) => ({ ...current, [target]: result }));
+    } catch (error) {
+      setDirectoryErrors((current) => ({ ...current, [target]: errorText(error) }));
+    } finally {
+      setDirectoryLoading((current) => ({ ...current, [target]: false }));
+    }
   }
 
   function showAllOffers() {
@@ -588,6 +631,43 @@ export default function App() {
                 onToggle={(value) => toggleFilter(providers, setProviders, value)}
                 searchable
               />
+              <div className="price-filter">
+                <span>
+                  {category === 'luce'
+                    ? 'Stima annua €'
+                    : category === 'internet'
+                      ? 'Canone €/mese'
+                      : 'Prezzo €'}
+                </span>
+                <label>
+                  <span>Da</span>
+                  <input
+                    aria-label="Prezzo minimo"
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={priceFrom}
+                    disabled={!canFilterPrice}
+                    onChange={(event) => {
+                      setPriceFrom(event.target.value.trim());
+                      setLimit(30);
+                    }}
+                  />
+                </label>
+                <label>
+                  <span>A</span>
+                  <input
+                    aria-label="Prezzo massimo"
+                    inputMode="decimal"
+                    placeholder="∞"
+                    value={priceTo}
+                    disabled={!canFilterPrice}
+                    onChange={(event) => {
+                      setPriceTo(event.target.value.trim());
+                      setLimit(30);
+                    }}
+                  />
+                </label>
+              </div>
               <label className="sort-control">
                 <span>Ordina</span>
                 <select
@@ -611,9 +691,23 @@ export default function App() {
                 </select>
               </label>
             </div>
-            {selectedFilterCount > 0 && (
+            {priceError && (
+              <p className="price-filter-error" role="alert">
+                {priceError}
+              </p>
+            )}
+            {!canFilterPrice && (
+              <p className="price-filter-note">
+                {category === 'luce'
+                  ? 'Per filtrare il prezzo, avvia la stima annua PLACET fissa.'
+                  : category === 'gas'
+                    ? 'Filtro prezzo non disponibile: confronta il totale con il tuo profilo sul Portale Offerte.'
+                    : 'Filtro prezzo non disponibile: il premio richiede un preventivo personale.'}
+              </p>
+            )}
+            {activeFilterCount > 0 && (
               <button className="clear-filters" onClick={clearFilters}>
-                Cancella filtri ({selectedFilterCount})
+                Cancella filtri ({activeFilterCount})
               </button>
             )}
             {energy && (
@@ -868,8 +962,100 @@ export default function App() {
                 Mostra altre offerte <ChevronDown size={16} />
               </button>
             )}
+            <details
+              className="provider-directory"
+              onToggle={(event) => {
+                if (event.currentTarget.open) void loadDirectory(category);
+              }}
+            >
+              <summary>Operatori dai registri ufficiali</summary>
+              <p>
+                Questo elenco è separato dalle offerte acquisite. La presenza nel registro non prova
+                che un operatore abbia un’offerta attiva per questa categoria.
+              </p>
+              {directoryLoading[category] && <p role="status">Caricamento registro ufficiale…</p>}
+              {directoryErrors[category] && <p role="alert">{directoryErrors[category]}</p>}
+              {directories[category] && (
+                <>
+                  <p>{directories[category].note}</p>
+                  <p>
+                    {directories[category].providers.length} operatori nel registro · Acquisito il{' '}
+                    {dateTime(directories[category].fetchedAt)}
+                  </p>
+                  <label className="directory-search">
+                    Cerca operatore
+                    <input
+                      value={directoryQuery}
+                      onChange={(event) => {
+                        setDirectoryQuery(event.target.value);
+                        setDirectoryLimit(40);
+                      }}
+                    />
+                  </label>
+                  <ul>
+                    {directories[category].providers
+                      .filter((provider) =>
+                        provider.name
+                          .toLocaleLowerCase('it')
+                          .includes(directoryQuery.toLocaleLowerCase('it')),
+                      )
+                      .slice(0, directoryLimit)
+                      .map((provider) => (
+                        <li key={provider.id}>
+                          <span>{provider.name}</span>
+                          {provider.website && (
+                            <button onClick={() => void open(provider.website!)}>
+                              Sito <ExternalLink size={12} />
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                  </ul>
+                  {directories[category].providers.filter((provider) =>
+                    provider.name
+                      .toLocaleLowerCase('it')
+                      .includes(directoryQuery.toLocaleLowerCase('it')),
+                  ).length > directoryLimit && (
+                    <button
+                      className="directory-more"
+                      onClick={() => setDirectoryLimit((count) => count + 40)}
+                    >
+                      Mostra altri operatori
+                    </button>
+                  )}
+                </>
+              )}
+              <button
+                className="directory-source"
+                onClick={() =>
+                  void open(
+                    directories[category]?.sourceUrl ??
+                      {
+                        luce: 'https://www.arera.it/area-operatori/ricerca-operatori',
+                        gas: 'https://www.arera.it/area-operatori/ricerca-operatori',
+                        internet: 'https://datiroc.agcom.it/elenco-pubblico',
+                        assicurazioni:
+                          'https://www.ivass.it/consumatori/siti-imprese-intermediari/',
+                      }[category],
+                  )
+                }
+              >
+                Apri registro ufficiale <ExternalLink size={12} />
+              </button>
+              {category === 'assicurazioni' && (
+                <button
+                  className="directory-source"
+                  onClick={() =>
+                    void open('https://www.ivass.it/operatori/imprese/albi/index.html')
+                  }
+                >
+                  Albo completo IVASS <ExternalLink size={12} />
+                </button>
+              )}
+            </details>
             <p className="results-footer">
-              Copertura limitata alle fonti indicate. Nessuna offerta sponsorizzata.
+              Le offerte visualizzate coprono le fonti indicate; il registro elenca operatori, non
+              offerte. Nessuna offerta sponsorizzata.
             </p>
           </main>
         )}
@@ -1225,6 +1411,18 @@ function MultiFilter({
 }) {
   const [search, setSearch] = useState('');
   const details = useRef<HTMLDetailsElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  function positionMenu() {
+    if (!details.current?.open || !menu.current) return;
+    if (window.innerWidth <= 850) {
+      menu.current.style.left = '';
+      return;
+    }
+    const anchor = details.current.getBoundingClientRect();
+    const width = menu.current.offsetWidth;
+    const left = Math.max(12, Math.min(anchor.left, window.innerWidth - width - 12));
+    menu.current.style.left = `${left - anchor.left}px`;
+  }
   useEffect(() => {
     const closeOutside = (event: PointerEvent) => {
       if (details.current?.open && !details.current.contains(event.target as Node)) {
@@ -1236,9 +1434,11 @@ function MultiFilter({
     };
     document.addEventListener('pointerdown', closeOutside);
     document.addEventListener('keydown', closeOnEscape);
+    window.addEventListener('resize', positionMenu);
     return () => {
       document.removeEventListener('pointerdown', closeOutside);
       document.removeEventListener('keydown', closeOnEscape);
+      window.removeEventListener('resize', positionMenu);
     };
   }, []);
   const visible = searchable
@@ -1247,12 +1447,18 @@ function MultiFilter({
       )
     : options;
   return (
-    <details className="multi-filter" ref={details}>
+    <details
+      className="multi-filter"
+      ref={details}
+      onToggle={(event) => {
+        if (event.currentTarget.open) requestAnimationFrame(positionMenu);
+      }}
+    >
       <summary>
         {title}
         {selected.length > 0 && <span className="filter-count">{selected.length}</span>}
       </summary>
-      <div className="multi-filter-menu">
+      <div className="multi-filter-menu" ref={menu}>
         {hint && <p className="filter-hint">{hint}</p>}
         {searchable && (
           <input

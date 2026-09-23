@@ -49,6 +49,12 @@ export interface SourceResult {
   calculationError?: string | null;
   partial?: boolean;
 }
+export interface ProviderDirectory {
+  providers: { id: string; name: string; website: string | null }[];
+  sourceUrl: string;
+  fetchedAt: string;
+  note: string;
+}
 export interface SearchEvent {
   requestId: string;
   result: SourceResult | null;

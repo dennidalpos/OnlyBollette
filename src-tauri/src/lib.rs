@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod domain;
 pub mod energy;
+pub mod providers;
 pub mod sources;
 mod store;
 
@@ -39,6 +40,11 @@ async fn cached_offers(
     tauri::async_runtime::spawn_blocking(move || store::load(&db, &category))
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn provider_directory(category: String) -> Result<providers::ProviderDirectory, String> {
+    providers::fetch(&category).await
 }
 
 #[tauri::command]
@@ -247,6 +253,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             cached_offers,
+            provider_directory,
             search_offers,
             cancel_search,
             model_status,
