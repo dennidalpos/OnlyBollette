@@ -17,6 +17,90 @@
   --surface: #f9faf8;
   --surface-muted: #f1f4f2;
 }
+
+.document-comparison {
+  margin: 22px 0;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+.document-comparison > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.document-comparison p,
+.document-comparison li {
+  line-height: 1.5;
+}
+.document-steps,
+.document-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+}
+.document-steps button {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.document-steps button.active {
+  border-color: var(--green);
+}
+.document-panel {
+  padding: 12px 0;
+}
+.document-panel h3 {
+  margin: 0 0 8px;
+}
+.document-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+}
+.document-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.document-fields input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: inherit;
+}
+.document-fields small {
+  font-size: 11px;
+  opacity: 0.75;
+}
+.document-confirm {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  margin: 14px 0;
+}
+.document-confirm input {
+  margin-top: 4px;
+}
+.document-catalog {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 460px;
+}
+.document-catalog select,
+.document-catalog input {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: inherit;
+}
 * {
   box-sizing: border-box;
 }

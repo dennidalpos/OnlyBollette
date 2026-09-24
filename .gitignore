@@ -3,6 +3,7 @@ dist/
 src-tauri/target/
 src-tauri/resources/runtime/
 .scratch/
+/test-bolletta-pdf/
 test-results/
 playwright-report/
 *.log

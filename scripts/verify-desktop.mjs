@@ -71,6 +71,14 @@ try {
   );
   await page.screenshot({ path: resolve(output, 'desktop-home.png') });
   assert.equal(await page.locator('.category-card').count(), 4);
+  await page.setViewportSize({ width: 420, height: 600 });
+  assert.equal(
+    await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    true,
+    'Home has no horizontal overflow at 420 px',
+  );
+  await page.screenshot({ path: resolve(output, 'desktop-home-narrow.png') });
+  await page.setViewportSize({ width: 1180, height: 820 });
   for (const category of ['Luce', 'Gas', 'Internet', 'Assicurazioni']) {
     const start = performance.now();
     await page
@@ -113,10 +121,19 @@ try {
       0,
       `${category}: source warning after refresh`,
     );
-    assert.equal(
-      snapshot.length,
-      ['Luce', 'Gas'].includes(category) ? 1 : 2,
-      `${category}: missing source`,
+    const expectedSources = {
+      Luce: ['Portale Offerte'],
+      Gas: ['Portale Offerte'],
+      Internet: [
+        'Iliad', 'Fastweb', 'TIM', 'Sky Wifi', 'PosteCasa',
+        'EOLO', 'Tiscali', 'CoopVoce', 'Kena', 'Dimensione',
+      ],
+      Assicurazioni: ['Bene', 'Allianz'],
+    };
+    assert.deepEqual(
+      snapshot.map((source) => source.source).sort(),
+      expectedSources[category].sort(),
+      `${category}: missing or unexpected source`,
     );
     for (const source of snapshot) {
       assert.equal(source.error, null, `${source.source}: failed refresh`);
@@ -245,10 +262,15 @@ try {
       );
     }
     if (category === 'Internet') {
+      await page.getByLabel('Prezzo minimo').fill('20');
+      await page.getByLabel('Prezzo massimo').fill('30');
+      assert.ok((await page.locator('.offer-card').count()) > 0);
+      await page.getByRole('button', { name: /Cancella filtri/ }).click();
       await page.getByRole('button', { name: 'Mobile', exact: true }).click();
       await page.getByLabel('Ordina offerte').selectOption('monthly');
       assert.ok((await page.locator('.offer-card').count()) > 0);
-      await page.getByLabel('Fornitore').selectOption('Iliad');
+      await page.locator('.filters .multi-filter > summary').click();
+      await page.getByRole('checkbox', { name: 'Iliad', exact: true }).check();
       await page.getByRole('button', { name: 'Dettagli', exact: true }).first().click();
       const aiButton = page.getByRole('button', { name: 'Evidenzia i punti chiave' });
       if (await aiButton.isVisible()) {

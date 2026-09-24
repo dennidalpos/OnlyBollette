@@ -33,6 +33,26 @@ test('browser preview does not present fictitious offers', async ({ page }, test
   await expect(page.locator('.category-card')).toHaveCount(4);
 });
 
+test('document comparison is available in every category and blocks unsupported savings', async ({
+  page,
+}) => {
+  await page.goto('/');
+  for (const category of ['Luce', 'Gas', 'Internet', 'Assicurazioni']) {
+    await page.locator('.category-card', { hasText: category }).click();
+    await page.locator('.document-comparison summary').first().click();
+    await expect(page.getByRole('button', { name: 'Documento attuale' })).toBeVisible();
+    await page.getByRole('button', { name: 'Inserisci i dati manualmente' }).click();
+    await page.setViewportSize({ width: 320, height: 568 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.getByRole('button', { name: 'Conferma dati' }).click();
+    await expect(page.locator('.document-comparison')).toContainText('Non confrontabile');
+    await expect(page.locator('.document-comparison')).not.toContainText('Differenza prima');
+    await page.getByRole('button', { name: 'Tutte le categorie' }).click();
+  }
+});
+
 test('energy filters allow multiple choices and explain their limits', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Luce Prezzo fisso · Indicizzato' }).click();
@@ -91,6 +111,7 @@ test('mock native refresh blocks interaction until completion or cancellation is
     let nextId = 1;
     let requestId = '';
     let failNextSearch = false;
+    let lastOpened = '';
     const mock = window as unknown as Record<string, unknown>;
     mock.isTauri = true;
     mock.__TAURI_INTERNALS__ = {
@@ -112,6 +133,25 @@ test('mock native refresh blocks interaction until completion or cancellation is
         if (command === 'model_status')
           return { installed: false, downloading: false, size: 1396198496 };
         if (command === 'cached_offers') return [];
+        if (command === 'source_names')
+          return args.category === 'luce' || args.category === 'gas'
+            ? ['Portale Offerte']
+            : args.category === 'internet'
+              ? [
+                  'Iliad',
+                  'Fastweb',
+                  'TIM',
+                  'Sky Wifi',
+                  'PosteCasa',
+                  'EOLO',
+                  'Tiscali',
+                  'CoopVoce',
+                  'Kena',
+                  'Dimensione',
+                ]
+              : ['Bene', 'Allianz'];
+        if (command === 'provider_directory' && args.category === 'internet')
+          throw new Error('Registro AGCOM non disponibile');
         if (command === 'provider_directory')
           return {
             providers: [
@@ -131,6 +171,10 @@ test('mock native refresh blocks interaction until completion or cancellation is
           return;
         }
         if (command === 'cancel_search') return;
+        if (command === 'open_link') {
+          lastOpened = String(args.url);
+          return;
+        }
         throw new Error(`Unexpected command: ${command}`);
       },
     };
@@ -142,6 +186,9 @@ test('mock native refresh blocks interaction until completion or cancellation is
     mock.__testSearch = {
       failNext() {
         failNextSearch = true;
+      },
+      lastOpened() {
+        return lastOpened;
       },
       emit(result: unknown, done: boolean, cancelled = false) {
         for (const [id, listener] of listeners) {
@@ -208,6 +255,23 @@ test('mock native refresh blocks interaction until completion or cancellation is
   await page.getByRole('button', { name: 'Aggiorna offerte' }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole('alert')).toContainText('Ricerca non disponibile');
+  await page.getByRole('button', { name: 'Tutte le categorie' }).click();
+  await page.locator('.category-card.internet').click();
+  await emit(null, true);
+  await page.locator('.provider-directory summary').click();
+  await expect(page.locator('.provider-directory [role="alert"]')).toContainText(
+    'Registro AGCOM non disponibile',
+  );
+  await page.getByRole('button', { name: 'Apri registro ufficiale' }).click();
+  expect(
+    await page.evaluate(() =>
+      (
+        window as unknown as {
+          __testSearch: { lastOpened: () => string };
+        }
+      ).__testSearch.lastOpened(),
+    ),
+  ).toBe('https://datiroc.agcom.it/elenco-pubblico');
 });
 
 test('AI setup is accessible and describes the download', async ({ page }, testInfo) => {

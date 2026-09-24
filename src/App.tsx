@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ElectricityComparison, EstimateDetails } from './ElectricityComparison';
+import { DocumentComparison } from './DocumentComparison';
 import { estimateElectricity, parametersError } from './electricity';
 import type { ElectricityEstimate, ElectricityProfile } from './electricity';
 import { invoke, isTauri } from '@tauri-apps/api/core';
@@ -66,7 +67,7 @@ const categorySubtitles = {
 const sourceNames = {
   luce: 'Portale Offerte · Acquirente Unico',
   gas: 'Portale Offerte · Acquirente Unico',
-  internet: 'Iliad · Fastweb',
+  internet: '10 fonti ufficiali · copertura in ampliamento',
   assicurazioni: 'Bene · Allianz',
 };
 const portal = 'https://www.ilportaleofferte.it/portaleOfferte/';
@@ -102,6 +103,7 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [completedSources, setCompletedSources] = useState(0);
+  const [expectedSources, setExpectedSources] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [subcategory, setSubcategory] = useState('');
@@ -248,6 +250,7 @@ export default function App() {
     setRefreshing(false);
     setCancelling(false);
     setCompletedSources(0);
+    setExpectedSources([]);
     setNow(Date.now());
     setSources([]);
     setQuery('');
@@ -270,12 +273,15 @@ export default function App() {
     setError('');
     setBusy(true);
     try {
-      const cached = await call<SourceResult[]>('cached_offers', { category: target });
+      const [cached, expected] = await Promise.all([
+        call<SourceResult[]>('cached_offers', { category: target }),
+        call<string[]>('source_names', { category: target }),
+      ]);
       if (epoch !== selectionEpoch.current) return;
       setSources(cached);
-      const expected = target === 'luce' || target === 'gas' ? 1 : 2;
+      setExpectedSources(expected);
       if (
-        cached.length < expected ||
+        expected.some((name) => !cached.some((source) => source.source === name)) ||
         cached.some((s) => Date.now() - Date.parse(s.fetchedAt) > 86400000) ||
         (target === 'luce' && !cached.some((s) => s.electricityParameters)) ||
         cached.some((s) => s.offers.some((offer) => offer.evidenceVersion !== 1))
@@ -836,6 +842,12 @@ export default function App() {
                 )}
               </div>
             </details>
+            <DocumentComparison
+              key={category}
+              category={category}
+              offers={allOffers}
+              electricityParameters={electricityParameters}
+            />
             {category === 'luce' && (
               <ElectricityComparison
                 profile={electricityProfile}
@@ -1369,7 +1381,7 @@ export default function App() {
               <p className="update-progress" aria-live="polite">
                 {cancelling
                   ? 'Interruzione in corso…'
-                  : `Fonti completate: ${completedSources} su ${category === 'luce' || category === 'gas' ? 1 : 2}`}
+                  : `Fonti completate: ${completedSources}${expectedSources.length ? ` su ${expectedSources.length}` : ''}`}
               </p>
             )}
             {refreshing && (

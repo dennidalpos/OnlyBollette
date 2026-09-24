@@ -22,6 +22,8 @@ export interface ElectricityEstimate {
   total: number;
 }
 
+export type ElectricityRates = NonNullable<Offer['electricityRates']>;
+
 export const parameterKeys = [
   'dispbt_d',
   'cdispd',
@@ -105,6 +107,19 @@ export function estimateElectricity(
     parametersError(parameters, now)
   )
     return null;
+  return estimateElectricityRates(rates, parameters, profile, now);
+}
+
+export function estimateElectricityRates(
+  rates: ElectricityRates,
+  parameters: ElectricityParameters,
+  profile: ElectricityProfile,
+  now = new Date(),
+  charges?: { dispatchUnit: number; commercialAnnual: number },
+): ElectricityEstimate | null {
+  if (profileError(profile) || parametersError(parameters, now)) return null;
+  if (charges && Object.values(charges).some((value) => !Number.isFinite(value) || value < 0))
+    return null;
   const { consumption: kwh, power, resident, f1Percent } = profile;
   if (rates.annualFee === null || !Number.isFinite(rates.annualFee)) return null;
   const unit =
@@ -119,8 +134,8 @@ export function estimateElectricity(
   if (unit === null || !Number.isFinite(unit)) return null;
   const p = parameters.values;
   const energy = rates.annualFee + unit * kwh;
-  const commercial = p.dispbt_d;
-  const dispatch = p.cdispd * kwh;
+  const commercial = charges?.commercialAnnual ?? p.dispbt_d;
+  const dispatch = (charges?.dispatchUnit ?? p.cdispd) * kwh;
   const network = p.sigma1 + (p.sigma2 + p.uc6s_d) * power + (p.sigma3 + p.uc3 + p.uc6p_d) * kwh;
   const levies = resident
     ? (p.asos_dr + p.arim_dr) * kwh

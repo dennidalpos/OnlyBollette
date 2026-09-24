@@ -26,6 +26,38 @@ pub fn sources(category: &str) -> Result<Vec<Source>, String> {
                 name: "Fastweb",
                 url: "https://www.fastweb.it/",
             },
+            Source {
+                name: "TIM",
+                url: "https://www.tim.it/fisso-e-mobile/fibra-e-adsl",
+            },
+            Source {
+                name: "Sky Wifi",
+                url: "https://www.sky.it/offerte/wifi/solo-internet",
+            },
+            Source {
+                name: "PosteCasa",
+                url: "https://www.poste.it/fibra/postecasa-ultraveloce",
+            },
+            Source {
+                name: "EOLO",
+                url: "https://www.eolo.it/offerte",
+            },
+            Source {
+                name: "Tiscali",
+                url: "https://abbonati.tiscali.it/fibra/casa-fibra-power/",
+            },
+            Source {
+                name: "CoopVoce",
+                url: "https://www.coopvoce.it/portale/offerte.html",
+            },
+            Source {
+                name: "Kena",
+                url: "https://www.kenamobile.it/offerte/",
+            },
+            Source {
+                name: "Dimensione",
+                url: "https://www.dimensione.com/portale/index.php",
+            },
         ],
         "assicurazioni" => vec![
             Source {
@@ -262,6 +294,9 @@ async fn fetch_inner(source: Source, category: &str) -> Result<(Vec<Offer>, bool
         .iter()
         .map(|path| (format!("https://www.bene.it/{path}/"), String::new()))
         .collect()
+    } else if category == "internet" && matches!(source.name, "Sky Wifi" | "PosteCasa" | "Tiscali")
+    {
+        vec![(source.url.into(), String::new())]
     } else {
         links(&html, source.url)
             .into_iter()
@@ -321,6 +356,39 @@ pub(crate) fn is_product_url(source: &str, url: &str, category: &str) -> bool {
             ]
             .iter()
             .any(|name| p == format!("/adsl-fibra-ottica/{name}/")),
+            "TIM" => [
+                "/fisso-e-mobile/fibra-e-adsl/fibra-wifi-casa",
+                "/fisso-e-mobile/fibra-e-adsl/fibra-solo-online",
+            ]
+            .contains(&p),
+            "EOLO" => [
+                "/offerte/eolo-casa",
+                "/offerte/eolo-casa-plus",
+                "/offerte/eolo-casa-max",
+                "/offerte/eolo-casa-fibra",
+                "/offerte/eolo-casa-fibra-max",
+                "/offerte/internet-seconda-casa",
+            ]
+            .contains(&p),
+            "CoopVoce" => [
+                "/content/coopvoce/portale/offerte/turbo-400.html",
+                "/content/coopvoce/portale/offerte/turbo-200.html",
+                "/content/coopvoce/portale/offerte/evo-simple.html",
+                "/content/coopvoce/portale/offerte/evo-30.html",
+            ]
+            .contains(&p),
+            "Kena" => p.starts_with("/prodotto/") && !p.contains("kena-pack"),
+            "Sky Wifi" => p == "/offerte/wifi/solo-internet",
+            "PosteCasa" => p == "/fibra/postecasa-ultraveloce",
+            "Tiscali" => p == "/fibra/casa-fibra-power/",
+            "Dimensione" => [
+                "/portale/fibra-internet-casa-ftth-2.5-giga.php",
+                "/portale/fibra-internet-10-giga-con-fritzbox-4690.php",
+                "/portale/fibra-internet-casa-ftth-molise-10-giga.php",
+                "/portale/internet-fwa.php",
+                "/portale/internet-ultraveloce-fwa-300.php",
+            ]
+            .contains(&p),
             _ => false,
         };
     }
@@ -394,6 +462,14 @@ pub fn parse_product(
         .unwrap_or("")
         .to_string();
     let mut name = title;
+    if category == "internet" && !matches!(source.name, "Iliad" | "Fastweb") {
+        if let Some(heading) = doc.select(&selector("h1")).next() {
+            let heading = clean(&heading.text().collect::<Vec<_>>().join(" "));
+            if !heading.is_empty() {
+                name = heading;
+            }
+        }
+    }
     let mut monthly_price = None;
     let mut first_year_cost = None;
     let mut valid_until = None;
@@ -489,9 +565,88 @@ pub fn parse_product(
                 .to_string();
         }
     }
+    if category == "internet" && source.name == "PosteCasa" {
+        let re = Regex::new(r"(?i)il costo mensile dell'offerta è\s*(\d{1,3})\s*,\s*(\d{2})\s*€")
+            .expect("PosteCasa monthly price pattern");
+        if let Some(captures) = re.captures(&text) {
+            monthly_price = format!("{}.{}", &captures[1], &captures[2])
+                .parse::<f64>()
+                .ok();
+        }
+    }
+    if category == "internet" && source.name == "Sky Wifi" {
+        let re = Regex::new(r"Sky Wifi\s+Cosa include\s*(\d{1,3})\s*,\s*(\d{2})\s*€\s*al mese")
+            .expect("Sky Wifi monthly price pattern");
+        if let Some(captures) = re.captures(&text) {
+            monthly_price = format!("{}.{}", &captures[1], &captures[2])
+                .parse::<f64>()
+                .ok();
+            name = "Sky Wifi".into();
+        }
+    }
+    if category == "internet" && source.name == "Tiscali" {
+        let re = Regex::new(r"Casa Fibra Power\s*(\d{1,3})\s*,\s*(\d{2})€\s*al mese per 12 mesi")
+            .expect("Tiscali monthly price pattern");
+        if let Some(captures) = re.captures(&text) {
+            monthly_price = format!("{}.{}", &captures[1], &captures[2])
+                .parse::<f64>()
+                .ok();
+        }
+    }
+    if category == "internet" && source.name == "Kena" {
+        let re = Regex::new(
+            r"(?i)Cosa stai acquistando.{0,250}?\ba\s*(\d{1,3})\s*,\s*(\d{2})\s*€\s*/\s*mese",
+        )
+        .expect("Kena monthly price pattern");
+        if let Some(captures) = re.captures(&text) {
+            monthly_price = format!("{}.{}", &captures[1], &captures[2])
+                .parse::<f64>()
+                .ok();
+        }
+    }
+    if category == "internet" && source.name == "Dimensione" {
+        let hero: String = text.chars().take(1_000).collect();
+        let re =
+            Regex::new(r"(?i)(?:€\s*)?(\d{1,3})\s*,\s*(\d{2})\s*(?:€\s*)?(?:/mese\s*)?per sempre")
+                .expect("Dimensione monthly price pattern");
+        if let Some(captures) = re.captures(&hero) {
+            monthly_price = format!("{}.{}", &captures[1], &captures[2])
+                .parse::<f64>()
+                .ok();
+        }
+        name = match url::Url::parse(url).ok()?.path() {
+            "/portale/fibra-internet-casa-ftth-2.5-giga.php" => "Fibra Vera 2.5 GIGA",
+            "/portale/fibra-internet-10-giga-con-fritzbox-4690.php" => "Ultra Fibra 10 GIGA",
+            "/portale/fibra-internet-casa-ftth-molise-10-giga.php" => "Fibra Vera 10 GIGA Molise",
+            "/portale/internet-fwa.php" => "FWA Unlimited",
+            "/portale/internet-ultraveloce-fwa-300.php" => "Ultra FWA 300 MEGA",
+            _ => return None,
+        }
+        .into();
+    }
+    if category == "internet" && source.name == "TIM" && url.ends_with("/fibra-wifi-casa") {
+        name = "TIM WiFi Casa con opzione 10 GIGA".into();
+    }
+    if category == "internet" && source.name == "EOLO" {
+        name = match url::Url::parse(url).ok()?.path() {
+            "/offerte/eolo-casa" => "EOLO Casa",
+            "/offerte/eolo-casa-plus" => "EOLO Casa Plus",
+            "/offerte/eolo-casa-max" => "EOLO Casa Max",
+            "/offerte/eolo-casa-fibra" => "EOLO Casa Fibra",
+            "/offerte/eolo-casa-fibra-max" => "EOLO Casa Fibra Max",
+            "/offerte/internet-seconda-casa" => "EOLO QuandoVuoiTu",
+            _ => return None,
+        }
+        .into();
+    }
     let low = format!("{url} {name}").to_lowercase();
     let subcategory = if category == "internet" {
-        if low.contains("fwa") || low.contains("5g-box") {
+        if matches!(source.name, "CoopVoce" | "Kena") {
+            "mobile"
+        } else if low.contains("fwa")
+            || low.contains("5g-box")
+            || (source.name == "EOLO" && !low.contains("fibra"))
+        {
             "fwa"
         } else if low.contains("mobile") || low.contains("domotica") {
             "mobile"
@@ -521,6 +676,12 @@ pub fn parse_product(
     }
     if first_year_cost.is_some() {
         conditions.push("Importo dei primi 12 mesi: 12 canoni pubblicizzati più attivazione SIM. Traffico extra, servizi opzionali e consumi a pagamento esclusi.".into());
+    }
+    if monthly_price.is_some() && matches!(source.name, "Sky Wifi" | "Tiscali") {
+        conditions.push("Canone promozionale dei primi 12 mesi; verificare il canone successivo e i requisiti nella fonte ufficiale.".into());
+    }
+    if source.name == "Dimensione" && url.contains("-molise-") {
+        conditions.push("Offerta riservata agli indirizzi coperti in Molise.".into());
     }
     let evidence = format!(
         "{name}\n{description}\n{}",
@@ -607,6 +768,69 @@ mod tests {
             "https://www.fastweb.it/adsl-fibra-ottica/fastweb-informa/",
             "internet"
         ));
+        assert!(!is_product_url(
+            "TIM",
+            "https://www.tim.it/fisso-e-mobile/fibra-e-adsl/fibra-internet-casa",
+            "internet"
+        ));
+    }
+    #[test]
+    fn new_internet_sources_keep_price_and_category_scoped() {
+        for (source, url) in [
+            ("Sky Wifi", "https://www.sky.it/offerte/wifi/solo-internet"),
+            (
+                "PosteCasa",
+                "https://www.poste.it/fibra/postecasa-ultraveloce",
+            ),
+            (
+                "Tiscali",
+                "https://abbonati.tiscali.it/fibra/casa-fibra-power/",
+            ),
+        ] {
+            assert!(is_product_url(source, url, "internet"));
+        }
+        let sky = parse_product(
+            Source {
+                name: "Sky Wifi",
+                url: "https://www.sky.it/offerte/wifi/solo-internet",
+            },
+            "internet",
+            "https://www.sky.it/offerte/wifi/solo-internet",
+            "",
+            "<html><head><title>Sky Wifi</title></head><body><main><h1>Internet casa</h1><p>Sky Wifi Cosa include 22 ,90€ al mese per 12 mesi anziché 29,90€ al mese. Verifica la copertura per il tuo indirizzo prima di acquistare la connessione.</p></main></body></html>",
+        )
+        .unwrap();
+        assert_eq!(sky.monthly_price, Some(22.9));
+        assert!(sky
+            .conditions
+            .iter()
+            .any(|value| value.contains("primi 12 mesi")));
+        let coop = parse_product(
+            Source {
+                name: "CoopVoce",
+                url: "https://www.coopvoce.it/portale/offerte.html",
+            },
+            "internet",
+            "https://www.coopvoce.it/content/coopvoce/portale/offerte/turbo-200.html",
+            "",
+            "<html><head><title>TURBO 200</title></head><body><main><h1>TURBO 200</h1><p>Offerta mobile con giga, minuti e messaggi. Il costo, l'attivazione e le condizioni sono descritti sul sito ufficiale.</p></main></body></html>",
+        )
+        .unwrap();
+        assert_eq!(coop.subcategory, "mobile");
+        assert_eq!(coop.monthly_price, None);
+        let kena = parse_product(
+            Source {
+                name: "Kena",
+                url: "https://www.kenamobile.it/offerte/",
+            },
+            "internet",
+            "https://www.kenamobile.it/prodotto/499-150-gb-5g-top/",
+            "",
+            "<html><head><title>Kena</title></head><body><main><h1>150 GB 5G TOP</h1><p>Altra opzione 1,99€ al mese. Cosa stai acquistando 150 Giga, Minuti Illimitati e 200 SMS a 4,99€ /mese. Attivazione, SIM e consegna gratuite.</p></main></body></html>",
+        )
+        .unwrap();
+        assert_eq!(kena.subcategory, "mobile");
+        assert_eq!(kena.monthly_price, Some(4.99));
     }
     #[test]
     fn excludes_investments_and_business_insurance() {

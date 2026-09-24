@@ -116,7 +116,11 @@ fn parse_arera(bytes: &[u8]) -> Result<Vec<Provider>, String> {
         .map_err(|e| format!("Elenco ARERA non leggibile: {e}"))?;
     let mut rows = range.rows();
     let header = rows.next().ok_or("Elenco ARERA vuoto")?;
-    let column = |name: &str| header.iter().position(|cell| cell.get_string() == Some(name));
+    let column = |name: &str| {
+        header
+            .iter()
+            .position(|cell| cell.get_string() == Some(name))
+    };
     let name_index = column("RAGIONE SOCIALE").ok_or("Nome venditore assente dall'elenco ARERA")?;
     let id_index = column("ID_SOGGETTO").ok_or("Codice soggetto assente dall'elenco ARERA")?;
     let site_index = column("SITO WEB").ok_or("Sito web assente dall'elenco ARERA")?;

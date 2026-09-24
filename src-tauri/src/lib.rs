@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod documents;
 pub mod domain;
 pub mod energy;
 pub mod providers;
@@ -21,6 +22,13 @@ pub struct AppState {
     ai: ai::Ai,
 }
 
+#[tauri::command]
+async fn analyze_document(path: String) -> Result<documents::DocumentAnalysis, String> {
+    tauri::async_runtime::spawn_blocking(move || documents::analyze(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SearchEvent {
@@ -28,6 +36,14 @@ struct SearchEvent {
     result: Option<domain::SourceResult>,
     done: bool,
     cancelled: bool,
+}
+
+#[tauri::command]
+fn source_names(category: String) -> Result<Vec<String>, String> {
+    Ok(sources::sources(&category)?
+        .into_iter()
+        .map(|source| source.name.to_string())
+        .collect())
 }
 
 #[tauri::command]
@@ -251,7 +267,10 @@ pub fn run() {
             });
             Ok(())
         })
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            analyze_document,
+            source_names,
             cached_offers,
             provider_directory,
             search_offers,

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { estimateElectricity, parametersError, profileError } from './electricity';
+import {
+  estimateElectricity,
+  estimateElectricityRates,
+  parametersError,
+  profileError,
+} from './electricity';
 import type { ElectricityProfile } from './electricity';
 import type { ElectricityParameters, Offer } from './types';
 
@@ -62,6 +67,11 @@ const estimate = (patch: Partial<ElectricityProfile> = {}) =>
   estimateElectricity(offer, parameters, { ...profile, ...patch }, now)!;
 
 describe('PLACET fixed electricity — official v4.0 method', () => {
+  it('uses the same regulated breakdown for reviewed document rates', () => {
+    expect(
+      estimateElectricityRates(offer.electricityRates!, parameters, profile, now)?.total,
+    ).toBeCloseTo(estimate().total, 6);
+  });
   it('calculates each charge and VAT on excise, without adding losses twice', () => {
     const result = estimate();
     expect(result.energy).toBe(390);

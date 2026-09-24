@@ -1,41 +1,68 @@
 {
-  "updatedAt": "2026-09-23",
-  "scope": "Open offer coverage, verification and source-access work. Completed checks are recorded in docs/VERIFICATION.md, not retained here.",
+  "updatedAt": "2026-09-24",
+  "scope": "Open document-comparison, offer coverage, verification and source-access work. Tasks are ordered by priority, then intended work order; blocked/external items require their stated prerequisite. Regression fixtures accompany each parser fix. Completed checks are recorded in docs/VERIFICATION.md, not retained here.",
+  "resume": {
+    "nextTask": "DOCUMENT-COMPONENT-BLOCK-TABLES",
+    "context": "Resume with sanitized fixtures for repeated economic-component headers and billing-period rows. Profile, OCR geometry and validity handling are implemented; the supplied bill still cannot produce a supported forward comparison.",
+    "verification": "See docs/VERIFICATION.md for the latest frontend, Rust, browser and native OCR checks. The installer has not been rebuilt for these changes.",
+    "localData": "The original test-bolletta-pdf directory is local-only and gitignored. Do not commit its PDF, OCR text or page images. Existing blocked scratch cleanup is tracked separately; keep the machine network active."
+  },
   "tasks": [
+    {
+      "id": "SCRATCH-FAILED-RUN",
+      "priority": "high",
+      "status": "blocked",
+      "summary": "Three verified leftover directories remain: .scratch/desktop-check-j13DSt, .scratch/bill-review-5dd5ea744af84a08ac2c1c2b932600bc (rendered bill pages with personal information), and .scratch/bill-native-CNZg5S (isolated WebView test profile). On 2026-09-24 automatic approval review rejected both scoped recursive cleanup and explicit deletion of the five rendered PNG files with \"blocked by policy\".",
+      "nextStep": "Use an approved cleanup path to remove only these three exact temporary directories, prioritizing the rendered bill pages. Verify their absence. Do not retry the rejected actions unchanged or bypass the policy; preserve the original test-bolletta-pdf PDF and all unrelated scratch/user data."
+    },
+    {
+      "id": "DOCUMENT-COMPONENT-BLOCK-TABLES",
+      "priority": "high",
+      "status": "pending",
+      "summary": "The new component parser and arithmetic pass explicit row-table fixtures and real Windows OCR, but the supplied bill's page-8 economic blocks remain unread. They repeat unit/price/quantity headings for each component, put billing periods on subsequent rows, distinguish seller commercial fees from fixed dispatch, and bill energy losses separately. The original PDF recheck returns no unit or fixed seller price and correctly no difference.",
+      "nextStep": "Add a sanitized layout-equivalent fixture with repeated component headers and period rows before extending extraction. Preserve precision and periods; distinguish seller fees, fixed dispatch and loss quantities without assigning them to DISPbt or a loss percentage without evidence. Resolve changing period prices explicitly. Keep incomplete or ambiguous components unconfirmed and require applicable current terms. Verify native OCR and frontend arithmetic; do not commit the original PDF or its text."
+    },
+    {
+      "id": "DOCUMENT-CURRENT-TERMS",
+      "priority": "high",
+      "status": "external",
+      "summary": "The supplied bill now yields the printed expiry and continuation passages, but does not establish the economic conditions applicable for the next twelve months. Comparison now requires confirmed applicable start/end dates on both sides, independently of a historical printed expiry or generic continuation clause.",
+      "nextStep": "Obtain the applicable current terms or renewal notice and the candidate's economic terms. Review prices, inclusions and the supported period before confirming dates. Do not infer twelve-month validity from continuation text or catalog subscription deadlines."
+    },
     {
       "id": "OFFER-COVERAGE-BREADTH",
       "priority": "high",
       "status": "pending",
-      "summary": "Internet offer retrieval still covers Iliad and Fastweb; insurance product retrieval still covers Bene and Allianz. Official operator registers identify more companies but do not publish a unified catalog of their current offers or personalized prices.",
-      "nextStep": "Add and verify source-specific official offer adapters where public data are accessible. Keep the separate registry directory and current coverage warning; never infer an offer or price from registration alone."
+      "summary": "Internet offer retrieval covers Iliad, Fastweb, TIM, Sky Wifi, PosteCasa, EOLO, Tiscali, CoopVoce, Kena and Dimensione. This is not all Italian national, local and virtual providers. Vodafone product HTML, ho. catalog text and spusu's home text were not readable by the native parser; 1Mobile returned client-side template placeholders. WINDTRE served a bot-block page and Very product pages redirected to anti-bot validation. BBBell and Enel have readable residential pages grouping multiple variants and conditional prices, which the current one-product-per-page adapter cannot represent faithfully. AGCOM's central comparison prototype is restricted to operators and consumer associations, and its registration directory is not an offer catalog. Insurance product retrieval covers Bene and Allianz.",
+      "nextStep": "Continue source-specific adapters for national, local and virtual operators using their active official product or tariff-transparency pages. For BBBell, parse individual residential variants and their conditions before adding offers. Keep blocked pages as explicit gaps. Never infer an offer or price from registration alone."
     },
     {
-      "id": "SOURCE-AGCOM-DIRECTORY",
+      "id": "DOCUMENT-QUOTE-END-TO-END",
       "priority": "medium",
       "status": "external",
-      "summary": "The active AGCOM registration endpoint returned 7,220 records in a PowerShell read, but a later native directory request timed out after 45 seconds. The cause is not confirmed.",
-      "nextStep": "Recheck the on-demand directory on a separate session or network. Keep the explicit in-app error and official register link; do not claim the operator directory loaded until a native check succeeds."
-    },
-    {
-      "id": "SOURCE-ALLIANZ-403",
-      "priority": "high",
-      "status": "external",
-      "summary": "Allianz catalog access is intermittent. On 2026-09-23 a fresh native insurance check returned two Allianz products but marked the catalog partial; a subsequent read of the official catalog returned HTTP 403.",
-      "nextStep": "Recheck fresh native access when the official source is available and require a complete catalog. Keep the in-app warning; do not bypass the access challenge or accept a cached or partial snapshot as a live pass."
+      "summary": "The supplied document describes the current electricity contract only. A complete real comparison has not been checked against a confirmed candidate offer or personal quote for the same profile and period.",
+      "nextStep": "After profile, component and validity corrections, use an eligible supported catalog offer with reviewed conditions or obtain a consenting redacted quote. Verify identical consumption/profile, comparable periods and costs, and the resulting difference with a breakdown. Record missing evidence explicitly; do not invent candidate prices or treat historical annual spending as a forecast."
     },
     {
       "id": "INSTALLER-ACCEPTANCE",
       "priority": "medium",
       "status": "pending",
-      "summary": "The 2026-09-23 NSIS installer predates the latest price-range filters, compact responsive layout and provider directories. Current source checks passed, but this revision has not been packaged and installed end to end.",
-      "nextStep": "Build and install this revision in an isolated Windows profile or test machine without replacing the user's existing installation. Verify low-resolution layout, price filters, provider directory errors and links, and offer refresh through partial results, completion, cancellation and failure. Confirm saved offers and warnings remain usable afterward."
+      "summary": "The installed NSIS package was checked on 2026-09-23, before the 24 September audit fixes. The corrected frontend and native code passed automated checks, but no installer was rebuilt in that correction pass. Installed-app behavior after a genuinely partial web catalog and failed refresh also remains unverified.",
+      "nextStep": "After the document corrections, rebuild the installer and test the updated app with isolated data. Verify source inventory/cache recovery and all document regressions, then partial/full source failures, saved offers, warnings and cancellation. Keep strict live checks failing on partial or failed sources; do not count the older installer run as acceptance of new code."
     },
     {
-      "id": "NETWORK-DISCONNECTION",
+      "id": "DOCUMENT-PICKER-NATIVE",
       "priority": "medium",
       "status": "pending",
-      "summary": "Native behavior across a real network disconnection and recovery is unverified.",
-      "nextStep": "Exercise the installed app in an isolated network environment and check source warnings, cancellation, and recovery."
+      "summary": "Native document IPC succeeded with synthetic documents and with the supplied eleven-page bill in an isolated debug app. This did not exercise the actual native file-picker click and selected-file review flow in the updated installed app.",
+      "nextStep": "After rebuilding the app, select an anonymized PDF through the actual native picker, confirm extracted fields and document/page provenance, cancel during OCR, then clear and restart. Verify no comparison/profile remains and no personal text is written to the offer database or AI caches."
+    },
+    {
+      "id": "DOCUMENT-COMPARISON-REAL-DOCS",
+      "priority": "medium",
+      "status": "external",
+      "summary": "The supplied eleven-page electricity PDF now yields annual consumption on page 4, residence from the supply summary on page 3, power/tariff on page 2, printed expiry on page 1, and 15 clauses including 6 continuation passages. All values remain unconfirmed. Its repeated economic blocks remain in DOCUMENT-COMPONENT-BLOCK-TABLES; current terms remain external. Other issuer layouts and redacted gas, Internet and insurance documents remain unverified.",
+      "nextStep": "Obtain consenting redacted samples for the remaining issuer layouts and categories. Check extraction, clause provenance, uncertainty and manual fallback. Keep prices and personal source text out of test logs. Track personalized portal comparison only in ESTIMATE-PORTAL-PARITY and candidate comparison in DOCUMENT-QUOTE-END-TO-END."
     },
     {
       "id": "ESTIMATE-PORTAL-PARITY",
@@ -45,18 +72,25 @@
       "nextStep": "Compare a consenting test profile and record any differences in included cost components."
     },
     {
+      "id": "SOURCE-AGCOM-DIRECTORY",
+      "priority": "medium",
+      "status": "external",
+      "summary": "The active AGCOM registration endpoint returned 7,220 records in a PowerShell read, but two consecutive native directory requests failed after the 45-second request timeout. The second run used verify-providers -- internet on 2026-09-23 and exited 1. The cause is not confirmed.",
+      "nextStep": "Recheck the on-demand directory in a later session or on another network. Keep the explicit in-app error and official register link; do not claim the operator directory loaded until a native check succeeds."
+    },
+    {
+      "id": "NETWORK-DISCONNECTION",
+      "priority": "medium",
+      "status": "pending",
+      "summary": "Native behavior across a real network disconnection and recovery is unverified. The user asked on 2026-09-23 to keep this machine's network active during this work.",
+      "nextStep": "Exercise the installed app in a separate isolated network environment and check source warnings, cancellation, and recovery."
+    },
+    {
       "id": "PLATFORM-BASELINE",
       "priority": "low",
       "status": "external",
       "summary": "Windows 10 and 8 GB RAM remain unverified as supported environments.",
       "nextStep": "Run install, retrieval, and local AI checks on those configurations before claiming support."
-    },
-    {
-      "id": "SCRATCH-FAILED-RUN",
-      "priority": "low",
-      "status": "blocked",
-      "summary": "The failed verifier run left .scratch/desktop-check-j13DSt. On 2026-09-23 automatic approval review again rejected recursive removal of this exact directory before execution.",
-      "nextStep": "Remove this exact temporary directory through an approved cleanup path; do not touch other scratch or user data."
     }
   ]
 }
