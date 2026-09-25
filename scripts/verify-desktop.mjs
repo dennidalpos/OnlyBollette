@@ -12,11 +12,15 @@ const scratch = resolve(root, '.scratch');
 await mkdir(scratch, { recursive: true });
 const dataDirectory = await mkdtemp(resolve(scratch, 'desktop-check-'));
 const testModel = process.env.ONLYBOLLETTE_TEST_MODEL;
+const requestedCategory = process.argv[3];
+const categories = ['Luce', 'Gas', 'Internet', 'Assicurazioni'];
+assert.ok(!requestedCategory || categories.includes(requestedCategory), 'Unknown verification category');
 let vite;
 let app;
 let browser;
 let failure;
 const evidence = { categories: {}, errors: [], startedAt: new Date().toISOString() };
+const requestTimings = [];
 try {
   if (testModel) {
     await mkdir(resolve(dataDirectory, 'models'));
@@ -42,14 +46,16 @@ try {
   app = spawn(executable, [], {
     cwd: root,
     windowsHide: true,
-    stdio: 'ignore',
+    stdio: ['ignore', 'ignore', 'pipe'],
     env: {
       ...process.env,
       ONLYBOLLETTE_DATA_DIR: dataDirectory,
+      ONLYBOLLETTE_SOURCE_DIAGNOSTICS: '1',
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
       WEBVIEW2_USER_DATA_FOLDER: resolve(dataDirectory, 'webview'),
     },
   });
+  app.stderr.on('data', (chunk) => requestTimings.push(chunk.toString()));
   await waitFor(async () => (await fetch(`http://127.0.0.1:${port}/json/version`)).ok, 20000);
   browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
   const context = browser.contexts()[0];
@@ -61,6 +67,21 @@ try {
       );
   await waitFor(async () => !!applicationPage(), 10000);
   const page = applicationPage();
+  evidence.progress = [];
+  await page.exposeFunction('recordSourceProgress', (event) => {
+    evidence.progress.push({ at: new Date().toISOString(), ...event });
+  });
+  await page.evaluate(async () => {
+    const internals = window.__TAURI_INTERNALS__;
+    await internals.invoke('plugin:event|listen', {
+      event: 'search-update', target: { kind: 'Any' },
+      handler: internals.transformCallback(({ payload }) => window.recordSourceProgress({
+        requestId: payload.requestId, done: payload.done, cancelled: payload.cancelled,
+        source: payload.result?.source, count: payload.result?.offers.length,
+        failed: !!payload.result?.error, partial: payload.result?.partial,
+      })),
+    });
+  });
   page.on('pageerror', (error) => evidence.errors.push(error.message));
   await page.getByRole('heading', { name: 'Da dove vuoi iniziare?' }).waitFor();
   const status = await page.evaluate(() => window.__TAURI_INTERNALS__.invoke('model_status'));
@@ -79,7 +100,7 @@ try {
   );
   await page.screenshot({ path: resolve(output, 'desktop-home-narrow.png') });
   await page.setViewportSize({ width: 1180, height: 820 });
-  for (const category of ['Luce', 'Gas', 'Internet', 'Assicurazioni']) {
+  for (const category of requestedCategory ? [requestedCategory] : categories) {
     const start = performance.now();
     await page
       .locator('.category-card')
@@ -92,6 +113,11 @@ try {
     await page.getByRole('button', { name: 'Aggiorna offerte' }).click();
     await page.getByRole('button', { name: 'Aggiorna offerte' }).waitFor({ timeout: 90000 });
     const countText = await page.locator('.list-meta').innerText();
+    assert.equal(
+      await page.locator('.offer-card .data-status.stale').count(),
+      0,
+      `${category}: freshly refreshed cards must not be marked stale`,
+    );
     const snapshot = await page.evaluate(
       async (category) => window.__TAURI_INTERNALS__.invoke('cached_offers', { category }),
       category.toLowerCase(),
@@ -126,7 +152,8 @@ try {
       Gas: ['Portale Offerte'],
       Internet: [
         'Iliad', 'Fastweb', 'TIM', 'Sky Wifi', 'PosteCasa',
-        'EOLO', 'Tiscali', 'CoopVoce', 'Kena', 'Dimensione',
+        'EOLO', 'Tiscali', 'CoopVoce', 'Kena', 'Dimensione', 'BBBell', 'BBBell Kiara', 'Enel Fibra',
+        'Vodafone', '1Mobile', 'ho.', 'spusu',
       ],
       Assicurazioni: ['Bene', 'Allianz'],
     };
@@ -135,6 +162,38 @@ try {
       expectedSources[category].sort(),
       `${category}: missing or unexpected source`,
     );
+    if (category === 'Internet') {
+      assert.ok(
+        (await page.locator('.results-heading').innerText()).includes(
+          `${expectedSources.Internet.length} fonti ufficiali`,
+        ),
+      );
+      const variants = snapshot.find((source) => source.source === 'BBBell').offers;
+      assert.equal(variants.length, 6, 'All current BBBell Family variants survive cache loading');
+      assert.equal(new Set(variants.map((offer) => offer.id)).size, variants.length);
+      assert.ok(variants.every((offer) => offer.firstYearCost === null));
+      const kiara = snapshot.find((source) => source.source === 'BBBell Kiara').offers;
+      assert.equal(kiara.length, 3);
+      assert.ok(kiara.every((offer) => offer.monthlyPrice === null && offer.firstYearCost === null));
+      const enel = snapshot.find((source) => source.source === 'Enel Fibra').offers;
+      assert.equal(enel.length, 6);
+      assert.ok(enel.every((offer) => offer.monthlyPrice > 0 && offer.firstYearCost === null));
+      const vodafone = snapshot.find((source) => source.source === 'Vodafone').offers;
+      assert.equal(vodafone.length, 2);
+      assert.ok(vodafone.every((offer) => offer.monthlyPrice > 0 && offer.firstYearCost === null));
+      const unomobile = snapshot.find((source) => source.source === '1Mobile').offers;
+      assert.equal(unomobile.length, 1);
+      assert.ok(unomobile[0].monthlyPrice > 0);
+      assert.equal(unomobile[0].firstYearCost, null);
+      const ho = snapshot.find((source) => source.source === 'ho.').offers;
+      assert.equal(ho.length, 2);
+      assert.deepEqual(ho.map((offer) => offer.monthlyPrice).sort((a, b) => a - b), [12.95, 14.95]);
+      assert.ok(ho.every((offer) => offer.firstYearCost === null));
+      const spusu = snapshot.find((source) => source.source === 'spusu').offers;
+      assert.equal(spusu.length, 3);
+      assert.deepEqual(spusu.map((offer) => offer.monthlyPrice).sort((a, b) => a - b), [3.98, 5.98, 7.89]);
+      assert.ok(spusu.every((offer) => offer.firstYearCost === null));
+    }
     for (const source of snapshot) {
       assert.equal(source.error, null, `${source.source}: failed refresh`);
       assert.equal(
@@ -206,7 +265,7 @@ try {
         );
       assert.ok(candidate, 'Ranked offer is backed by parsed PLACET data');
       const p = parameters.values;
-      // Independent bill reconstruction at 2,700 kWh, resident, 3 kW.
+      // Bill reconstruction: 2,700 kWh, resident, 3 kW.
       const energy = candidate.electricityRates.annualFee + 2700 * candidate.electricityRates.mono;
       const regulated =
         p.dispbt_d +
@@ -297,17 +356,19 @@ try {
     }
     await page.getByRole('button', { name: 'Tutte le categorie' }).click();
   }
-  // Cancel electricity, then open gas and verify no electricity results leak into it.
-  await page.locator('.category-card.luce').click();
-  await page.getByRole('button', { name: 'Aggiorna offerte' }).click();
-  await page.getByRole('button', { name: 'Interrompi' }).click();
-  await page.getByRole('button', { name: 'Aggiorna offerte' }).waitFor();
-  await page.getByRole('button', { name: 'Tutte le categorie' }).click();
-  await page.locator('.category-card.gas').click();
-  await page.getByRole('heading', { name: 'Offerte gas' }).waitFor();
-  await page.locator('.offer-card').first().waitFor();
-  assert.equal(await page.locator('.electricity-comparison').count(), 0);
-  await page.getByRole('button', { name: 'Tutte le categorie' }).click();
+  if (!requestedCategory) {
+    // Category isolation check on cancellation.
+    await page.locator('.category-card.luce').click();
+    await page.getByRole('button', { name: 'Aggiorna offerte' }).click();
+    await page.getByRole('button', { name: 'Interrompi' }).click();
+    await page.getByRole('button', { name: 'Aggiorna offerte' }).waitFor();
+    await page.getByRole('button', { name: 'Tutte le categorie' }).click();
+    await page.locator('.category-card.gas').click();
+    await page.getByRole('heading', { name: 'Offerte gas' }).waitFor();
+    await page.locator('.offer-card').first().waitFor();
+    assert.equal(await page.locator('.electricity-comparison').count(), 0);
+    await page.getByRole('button', { name: 'Tutte le categorie' }).click();
+  }
   assert.deepEqual(evidence.errors, []);
   await writeFile(resolve(output, 'desktop-verification.json'), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence, null, 2));
@@ -328,6 +389,7 @@ try {
   await writeFile(resolve(output, 'desktop-verification.json'), JSON.stringify(evidence, null, 2));
   failure = error;
 } finally {
+  await writeFile(resolve(output, 'desktop-source-timings.log'), requestTimings.join(''));
   let cleanupError;
   try {
     if (app?.exitCode === null) {

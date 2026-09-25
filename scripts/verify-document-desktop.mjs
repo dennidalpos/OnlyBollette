@@ -25,7 +25,7 @@ async function waitFor(predicate, timeoutMs) {
     try {
       if (await predicate()) return;
     } catch {
-      /* WebView is still starting. */
+      /* WebView starting. */
     }
     await delay(250);
   }
@@ -37,7 +37,9 @@ try {
   await new Promise((done) => reserve.listen(0, '127.0.0.1', done));
   const port = reserve.address().port;
   await new Promise((done) => reserve.close(done));
-  const executable = resolve(root, 'src-tauri/target/release/onlybollette.exe');
+  const executable = resolve(
+    process.argv[4] ?? resolve(root, 'src-tauri/target/release/onlybollette.exe'),
+  );
   app = spawn(executable, [], {
     cwd: root,
     windowsHide: true,
@@ -64,7 +66,11 @@ try {
   const status = await current.evaluate(() => window.__TAURI_INTERNALS__.invoke('model_status'));
   assert.equal(status.dataDirectory, dataDirectory, 'App must use the isolated data directory');
   const analysis = await current.evaluate(
-    (path) => window.__TAURI_INTERNALS__.invoke('analyze_document', { path }),
+    (path) =>
+      window.__TAURI_INTERNALS__.invoke('analyze_document', {
+        path,
+        requestId: crypto.randomUUID(),
+      }),
     fixture,
   );
   assert.equal(analysis.readable, true);
@@ -76,6 +82,11 @@ try {
     existsSync(resolve(dataDirectory, 'offers.sqlite')),
     false,
     'Personal text must not create an offer database',
+  );
+  assert.equal(
+    existsSync(resolve(dataDirectory, 'models')),
+    false,
+    'OCR must not download an AI model',
   );
   console.log(`Native document IPC passed: ${analysis.pages.length} page(s), no offer database`);
 } catch (error) {

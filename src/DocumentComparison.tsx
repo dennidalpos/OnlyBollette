@@ -57,9 +57,20 @@ export function DocumentComparison({
   const [catalogQuery, setCatalogQuery] = useState('');
   const [manualQuoteConfirmed, setManualQuoteConfirmed] = useState(false);
   const documentEpoch = useRef(0);
+  const activeDocumentJob = useRef<string | null>(null);
+  function cancelActiveDocument() {
+    const requestId = activeDocumentJob.current;
+    activeDocumentJob.current = null;
+    if (requestId) {
+      void invoke('cancel_document', { requestId }).catch((error) => {
+        setError(error instanceof Error ? error.message : String(error));
+      });
+    }
+  }
   useEffect(
     () => () => {
       documentEpoch.current++;
+      cancelActiveDocument();
     },
     [],
   );
@@ -95,6 +106,7 @@ export function DocumentComparison({
       return;
     }
     const epoch = ++documentEpoch.current;
+    cancelActiveDocument();
     setLoading(true);
     try {
       const path = await open({
@@ -108,7 +120,9 @@ export function DocumentComparison({
         ],
       });
       if (epoch !== documentEpoch.current || typeof path !== 'string') return;
-      const result = await invoke<DocumentAnalysis>('analyze_document', { path });
+      const requestId = crypto.randomUUID();
+      activeDocumentJob.current = requestId;
+      const result = await invoke<DocumentAnalysis>('analyze_document', { path, requestId });
       if (epoch !== documentEpoch.current) return;
       const parsed = parseDocument(category, role === 'terms' ? 'current' : role, result);
       const found = Object.entries(parsed.fields)
@@ -147,6 +161,7 @@ export function DocumentComparison({
     } catch (e) {
       if (epoch === documentEpoch.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
+      if (epoch === documentEpoch.current) activeDocumentJob.current = null;
       if (epoch === documentEpoch.current) setLoading(false);
     }
   }
@@ -181,6 +196,7 @@ export function DocumentComparison({
 
   function clear() {
     documentEpoch.current++;
+    cancelActiveDocument();
     setLoading(false);
     setDocuments([]);
     setFields({});
@@ -198,6 +214,7 @@ export function DocumentComparison({
 
   function chooseCatalogOffer(id: string) {
     documentEpoch.current++;
+    cancelActiveDocument();
     setLoading(false);
     setCatalogOfferId(id);
     setClauses((items) => items.filter((item) => item.role !== 'quote'));
@@ -356,7 +373,7 @@ export function DocumentComparison({
           {conflicts.length > 0 && (
             <div role="alert">
               <p>
-                Valori discordanti nei documenti:{' '}
+                Valori discordanti o incompleti nei documenti:{' '}
                 {conflicts
                   .map((key) => specs.find((spec) => spec.key === key)?.label ?? key)
                   .join(', ')}

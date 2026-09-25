@@ -86,7 +86,7 @@ export function parametersError(
   return null;
 }
 
-// Portale Offerte, calculation rules v4.0, sections 3.1.1–3.1.6 (from April 2026).
+// Portale Offerte v4.0 §3.1.1–3.1.6 (Apr 2026).
 export function estimateElectricity(
   offer: Offer,
   parameters: ElectricityParameters,
@@ -140,7 +140,7 @@ export function estimateElectricityRates(
   const levies = resident
     ? (p.asos_dr + p.arim_dr) * kwh
     : p.asos_dnr_f + p.arim_dnr_f + (p.asos_dnr_v + p.arim_dnr_v) * kwh;
-  // Annual consumption is uniform; the 1,800 kWh exemption tapers above 2,640 kWh.
+  // Uniform kWh: 1,800 kWh exemption tapers >2,640 kWh.
   const exempt =
     resident && power <= 3 ? Math.min(kwh, Math.max(0, 1800 - Math.max(0, kwh - 2640))) : 0;
   const excise =

@@ -1,9 +1,10 @@
-param([Parameter(Mandatory)][string]$OutputPath)
+param([Parameter(Mandatory)][string]$OutputPath, [switch]$ComponentBlocks, [switch]$MissingEnergyUnit, [switch]$ValidityRange)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $bitmap = [System.Drawing.Bitmap]::new(1800, 2100)
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 $font = [System.Drawing.Font]::new('Arial', 24)
+$smallFont = [System.Drawing.Font]::new('Arial', 17)
 try {
     $graphics.Clear([System.Drawing.Color]::White)
     $graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
@@ -47,12 +48,42 @@ try {
         @(50, 1900, 'Condizioni economiche applicabili dal 01/01/2026 al 31/12/2099'),
         @(50, 2000, 'Prezzo fisso')
     )
+    if ($ValidityRange) {
+        $rows = @($rows | Where-Object { $_[1] -ne 1640 -and $_[1] -ne 1690 -and $_[1] -ne 1900 })
+        $rows += ,@(50, 1640, 'Validità condizioni economiche: dal 01/01/2025 al 31/12/2025')
+    }
+    if ($ComponentBlocks) {
+        $rows = @()
+        $components = @(
+            @('Commercializzazione e vendita - parte fissa', 'euro/pdp/mese', '9,12345678', '2'),
+            @('Componente di dispacciamento (parte fissa)', 'euro/pdp/mese', '0,23456789', '2'),
+            @('Corrispettivo Energia', 'euro/kWh', '0,14567890', '200'),
+            @('Perdite su Corrispettivo Energia', 'euro/kWh', '0,14567890', '19'),
+            @('Dispacciamento', 'euro/kWh', '0,02345678', '200'),
+            @('Quota energia', 'euro/kWh', '0,00987654', '200')
+        )
+        for ($index = 0; $index -lt $components.Count; $index++) {
+            $component = $components[$index]
+            $y = 50 + $index * 260
+            $rows += @(@(50, $y, $component[0]), @(850, $y, 'tipo prezzo'), @(1150, $y, 'prezzo'), @(1450, $y, 'quantità'), @(1650, $y, 'euro'))
+            $periods = @('DAL 01/05/2026 AL 31/05/2026', 'DAL 01/06/2026 AL 30/06/2026')
+            for ($offset = 0; $offset -lt $periods.Count; $offset++) {
+                $lineY = $y + 60 + $offset * 60
+                $rows += @(@(50, $lineY, $periods[$offset]), @(850, $lineY, $component[1]), @(1150, $lineY, $component[2]), @(1450, $lineY, $component[3]), @(1650, $lineY, '29,14'))
+            }
+        }
+    }
     foreach ($row in $rows) {
-        $graphics.DrawString($row[2], $font, [System.Drawing.Brushes]::Black, [float]$row[0], [float]$row[1])
+        $compactUnit = $ComponentBlocks -and $row[0] -eq 850 -and $row[1] -eq 630
+        if ($compactUnit -and $MissingEnergyUnit) { continue }
+        $drawFont = if ($compactUnit) { $smallFont } else { $font }
+        $x = if ($compactUnit) { $row[0] + 30 } else { $row[0] }
+        $graphics.DrawString($row[2], $drawFont, [System.Drawing.Brushes]::Black, [float]$x, [float]$row[1])
     }
     $bitmap.Save($OutputPath, [System.Drawing.Imaging.ImageFormat]::Png)
 } finally {
     $font.Dispose()
+    $smallFont.Dispose()
     $graphics.Dispose()
     $bitmap.Dispose()
 }

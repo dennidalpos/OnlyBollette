@@ -226,7 +226,7 @@ function pageRows(page: DocumentPage): DocumentWord[] {
     let segment: DocumentWord | undefined;
     for (const word of [...line.words].sort((a, b) => a.x - b.x)) {
       if (!word.text.trim()) continue;
-      // OCR can put both columns on one line. Retain separate table cells too.
+      // Multi-column line: retain separate cells.
       if (
         !segment ||
         word.x - segment.x - segment.width > 2 * Math.max(segment.height, word.height)
@@ -314,7 +314,7 @@ function profileValues(rows: DocumentWord[], key: string, unit: string): string[
     if (kind === 'other' || (!usage && kind === 'usage') || (resident && kind !== 'supply'))
       continue;
     let text = row.text;
-    // Only join a unique value cell in the same recognized section.
+    // Join unique value in same section.
     if (header && !valuePattern.test(text)) {
       const peers = rows.filter(
         (other) =>
@@ -329,7 +329,7 @@ function profileValues(rows: DocumentWord[], key: string, unit: string): string[
       for (let count = 0; count < 3; count++) {
         const next = neighboringRow(rows, previous, 1);
         if (!next || section(next) !== header) break;
-        // A standalone value or an explicit period can continue a profile label.
+        // Standalone value/period continues label.
         if (
           !/^(?:dal |al |periodo\b|totale\b|[\d.,]+\s*(?:kWh|Smc|kW)\b|(?:domestico )?(?:non )?residente\b|(?:mono|bi|multi)orari[ao]\b)/i.test(
             next.text,
@@ -347,7 +347,7 @@ function profileValues(rows: DocumentWord[], key: string, unit: string): string[
       !valuePattern.test(text) &&
       /dal\s+\d{2}[/.]\d{2}[/.]\d{4}\s+al\s+\d{2}[/.]\d{2}[/.]\d{4}/i.test(text)
     ) {
-      // Annual totals may be centered badges, with the unit on the next line.
+      // Centered badge: unit on next line.
       const badges = rows.filter(
         (candidate) =>
           /^\d+(?:[.,]\d+)*$/.test(candidate.text) &&
@@ -408,6 +408,10 @@ export function parseDocument(
           /^(?:scadenza (?:delle )?condizioni economiche|condizioni economiche fino al)\s*:?\s*(\d{2}[/.]\d{2}[/.]\d{4})/i,
         );
         if (expiry) addDate('valid', expiry[1]);
+        const validityRange = passage.match(
+          /^validità (?:delle )?condizioni economiche\s*:?\s*dal\s+(\d{2}[/.]\d{2}[/.]\d{4})\s+al\s+(\d{2}[/.]\d{2}[/.]\d{4})/i,
+        );
+        if (validityRange) addDate('valid', validityRange[2]);
         const applicable = passage.match(
           /^condizioni economiche applicabili dal\s+(\d{2}[/.]\d{2}[/.]\d{4})\s+al\s+(\d{2}[/.]\d{2}[/.]\d{4})/i,
         );
@@ -426,9 +430,20 @@ export function parseDocument(
         const key = `${component.key}${suffix}`;
         if (conflicts.has(key)) continue;
         const previous = fields[key];
-        if (previous && previous.value !== component.value) {
+        const equal =
+          previous &&
+          (previous.value === component.value ||
+            (/^(unit|fixed|dispatchUnit|commercialAnnual)$/.test(component.key) &&
+              component.value !== null &&
+              Number(previous.value.replace(',', '.')) ===
+                Number(component.value.replace(',', '.'))));
+        if (component.value === null || (previous && !equal)) {
           delete fields[key];
           conflicts.add(key);
+        } else if (previous && component.period) {
+          previous.period = [
+            ...new Set([...(previous.period?.split('; ') ?? []), component.period]),
+          ].join('; ');
         } else if (!previous)
           fields[key] = {
             value: component.value,

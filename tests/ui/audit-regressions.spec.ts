@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import type { DocumentAnalysis } from '../../src/comparisonDocuments';
+import type { SourceResult } from '../../src/types';
 import { profileBill } from '../fixtures/document-layout';
 
 interface AuditWindow extends Window {
@@ -8,6 +9,7 @@ interface AuditWindow extends Window {
   auditFailOcr: boolean;
   auditResolveDocument: (document: DocumentAnalysis) => void;
   auditEmit: (completed: number) => void;
+  auditEmitResult: (result: SourceResult, done: boolean) => void;
 }
 
 test.beforeEach(async ({ page }) => {
@@ -125,6 +127,15 @@ test.beforeEach(async ({ page }) => {
         }
       }
     };
+    mock.auditEmitResult = (result, done) => {
+      for (const [id, listener] of listeners) {
+        if (listener.name === 'search-update')
+          listener.callback({
+            id,
+            payload: { requestId, result, done, cancelled: false },
+          });
+      }
+    };
   });
   await page.goto('/');
 });
@@ -145,18 +156,42 @@ test('refreshes missing source identities and reports the configured total', asy
       'CoopVoce',
       'Kena',
       'Dimensione',
+      'BBBell',
     ];
   });
   await page.locator('.category-card.internet').click();
   const dialog = page.getByRole('dialog', { name: 'Aggiornamento offerte in corso' });
-  await expect(dialog).toContainText('Fonti completate: 0 su 10');
+  await expect(dialog).toContainText('Fonti completate: 0 su 11');
   expect(
     await page.evaluate(() =>
       (window as unknown as AuditWindow).auditCalls.filter((call) => call === 'search_offers'),
     ),
   ).toHaveLength(1);
   await page.evaluate(() => (window as unknown as AuditWindow).auditEmit(3));
-  await expect(dialog).toContainText('Fonti completate: 3 su 10');
+  await expect(dialog).toContainText('Fonti completate: 3 su 11');
+  await expect(page.locator('.results-heading')).toContainText('11 fonti ufficiali');
+});
+
+test('newly refreshed offers are immediately acquired before the next clock tick', async ({
+  page,
+}) => {
+  await page.clock.install();
+  await page.locator('.category-card.internet').click();
+  await expect(page.locator('.offer-card')).toHaveCount(2);
+  await page.clock.fastForward(5000);
+  await page.getByRole('button', { name: 'Aggiorna offerte' }).click();
+  await page.evaluate(async () => {
+    const mock = window as unknown as AuditWindow & {
+      __TAURI_INTERNALS__: {
+        invoke: (command: string, args: Record<string, unknown>) => Promise<SourceResult[]>;
+      };
+    };
+    const fresh = await mock.__TAURI_INTERNALS__.invoke('cached_offers', { category: 'internet' });
+    mock.auditEmitResult({ ...fresh[0], cached: false }, true);
+  });
+  await expect(
+    page.locator('.offer-card').filter({ hasText: 'Synthetic 0' }).locator('.data-status'),
+  ).toHaveText('Acquisito');
 });
 
 test('refreshes when cache count matches but a required source is absent', async ({ page }) => {
@@ -283,6 +318,15 @@ test('clearing an in-flight OCR ignores its late result and keeps the next uploa
   await page.getByRole('button', { name: 'Documento attuale', exact: true }).click();
   await expect(page.getByText('Lettura locale in corso…', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Cancella confronto', exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as AuditWindow).auditCalls.filter((call) => call === 'cancel_document')
+            .length,
+      ),
+    )
+    .toBe(1);
   await page.evaluate(() =>
     (window as unknown as AuditWindow).auditResolveDocument({
       fileName: 'cleared.pdf',

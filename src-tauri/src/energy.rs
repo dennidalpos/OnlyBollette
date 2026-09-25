@@ -314,7 +314,7 @@ pub fn parse_placet(input: &str, category: &str, source_url: &str) -> Result<Vec
             .iter()
             .any(|key| !get(key).is_empty());
         let rate = |key: &str| get(key).parse::<f64>().ok().filter(|v| v.is_finite());
-        // ARERA 135/2022, art. 1: simulated fixed PLACET; M/F selects the contract tariff.
+        // ARERA 135/2022 art. 1: fixed PLACET; M/F selects tariff.
         let code = get("cod_offerta").as_bytes();
         let tariff = if code.len() == 32 && code[..6].iter().all(u8::is_ascii_digit) {
             match code.get(6..11) {

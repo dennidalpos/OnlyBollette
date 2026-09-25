@@ -19,3 +19,4 @@ foreach ($artifact in $artifacts) {
   Remove-Item -LiteralPath $archive
 }
 Write-Output 'Verified llama.cpp b10982 CPU and Vulkan runtimes installed.'
+& (Join-Path $PSScriptRoot 'prepare-ocr.ps1')

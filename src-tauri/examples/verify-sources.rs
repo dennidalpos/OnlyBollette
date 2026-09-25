@@ -21,7 +21,14 @@ async fn main() {
         }
         return;
     }
-    let categories = if args.is_empty() {
+    let source_filter = if args.first().is_some_and(|s| s == "--source") {
+        Some(args.get(1).expect("source name after --source").clone())
+    } else {
+        None
+    };
+    let categories = if source_filter.is_some() {
+        vec![args.get(2).expect("category after source name").clone()]
+    } else if args.is_empty() {
         vec![
             "luce".into(),
             "gas".into(),
@@ -33,7 +40,16 @@ async fn main() {
     };
     let mut failed = false;
     for category in categories {
-        let configs = sources::sources(&category).expect("valid category");
+        let configs: Vec<_> = sources::sources(&category)
+            .expect("valid category")
+            .into_iter()
+            .filter(|source| {
+                source_filter
+                    .as_ref()
+                    .is_none_or(|name| source.name == name)
+            })
+            .collect();
+        assert!(!configs.is_empty(), "unknown source in category");
         let mut total = 0;
         for config in configs {
             let start = std::time::Instant::now();

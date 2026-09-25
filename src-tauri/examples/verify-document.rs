@@ -3,7 +3,20 @@ fn main() {
     let path = args.next().expect("pass a PDF or image path");
     let required = args.next();
     let json = args.next().as_deref() == Some("--json");
-    match onlybollette_lib::documents::analyze(&path) {
+    let runtime = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("resources/runtime")
+        .canonicalize()
+        .expect("bundled runtime directory");
+    let result = std::thread::spawn(move || {
+        onlybollette_lib::documents::analyze(
+            &path,
+            &runtime,
+            &tokio_util::sync::CancellationToken::new(),
+        )
+    })
+    .join()
+    .expect("native OCR worker");
+    match result {
         Ok(document) => {
             if !json {
                 println!(

@@ -1,10 +1,55 @@
-// Artificial text and geometry only; never derived from customer identifiers.
+// Synthetic fixture only.
 export const word = (text: string, x: number, y: number, width = text.length * 10) => ({
   text,
   x,
   y,
   width,
   height: 20,
+});
+
+export const componentBlocks = () => ({
+  fileName: 'synthetic-component-blocks.pdf',
+  readable: true,
+  pages: [
+    {
+      number: 8,
+      text: '',
+      lines: [
+        ...[
+          ['Commercializzazione e vendita - parte fissa', 'euro/pdp/mese', '9,12345678', '2'],
+          ['Componente di dispacciamento (parte fissa)', 'euro/pdp/mese', '0,23456789', '2'],
+          ['Corrispettivo Energia', 'euro/kWh', '0,14567890', '200'],
+          ['Perdite su Corrispettivo Energia', 'euro/kWh', '0,14567890', '19'],
+          ['Dispacciamento', 'euro/kWh', '0,02345678', '200'],
+          ['Quota energia', 'euro/kWh', '0,00987654', '200'],
+        ].flatMap(([label, unit, price, quantity], index) => {
+          const y = 40 + index * 160;
+          return [
+            {
+              words: [
+                word(label, 40, y),
+                word('tipo prezzo', 600, y),
+                word('prezzo', 850, y),
+                word('quantità', 1100, y),
+                word('euro', 1350, y),
+              ],
+            },
+            ...['DAL 01/05/2026 AL 31/05/2026', 'DAL 01/06/2026 AL 30/06/2026'].map(
+              (period, offset) => ({
+                words: [
+                  word(period, 40, y + 40 + offset * 40),
+                  word(unit, 600, y + 40 + offset * 40),
+                  word(price, 850, y + 40 + offset * 40),
+                  word(quantity, 1100, y + 40 + offset * 40),
+                  word('29,14', 1350, y + 40 + offset * 40),
+                ],
+              }),
+            ),
+          ];
+        }),
+      ],
+    },
+  ],
 });
 
 export const layoutBill = {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseDocument, compareDocuments, type Fields } from './comparisonDocuments';
 import { parameterKeys } from './electricity';
-import { word } from '../tests/fixtures/document-layout';
+import { componentBlocks, word } from '../tests/fixtures/document-layout';
 
 const componentDocument = (monthly = true) => ({
   fileName: 'synthetic-components.pdf',
@@ -94,6 +94,72 @@ const base = (): Fields =>
   );
 
 describe('document energy components', () => {
+  it('reads repeated component blocks without turning loss quantities or fixed dispatch into DISPbt', () => {
+    const parsed = parseDocument('luce', 'current', componentBlocks());
+    expect(parsed.fields.unitCurrent).toMatchObject({
+      value: '0,14567890',
+      document: 'synthetic-component-blocks.pdf',
+      page: 8,
+      confirmed: false,
+      period: 'DAL 01/05/2026 AL 31/05/2026; DAL 01/06/2026 AL 30/06/2026',
+    });
+    expect(parsed.fields.fixedCurrent.value).toBe('109,48148136');
+    expect(parsed.fields.dispatchUnitCurrent.value).toBe('0,02345678');
+    expect(parsed.fields.commercialAnnualCurrent).toBeUndefined();
+    expect(parsed.fields.commercialModeCurrent).toBeUndefined();
+    expect(parsed.fields.lossPercentCurrent).toBeUndefined();
+    expect(parsed.fields.lossesCurrent).toBeUndefined();
+    expect(compareDocuments('luce', parsed.fields, true, true, parameters()).difference).toBeNull();
+  });
+
+  it('leaves changing period prices and incomplete period rows unresolved', () => {
+    for (const value of ['0,15567890', 'o,14567890', '']) {
+      const doc = componentBlocks();
+      doc.pages[0].lines[8].words[2].text = value;
+      const parsed = parseDocument('luce', 'current', doc);
+      expect(parsed.fields.unitCurrent).toBeUndefined();
+      expect(parsed.conflicts).toContain('unitCurrent');
+    }
+  });
+
+  it('requires each block header and never borrows a price from quantity or the next block', () => {
+    const doc = componentBlocks();
+    doc.pages[0].lines[6].words[2].text = 'importo';
+    const parsed = parseDocument('luce', 'current', doc);
+    expect(parsed.fields.unitCurrent).toBeUndefined();
+    expect(parsed.fields.fixedCurrent.value).toBe('109,48148136');
+    expect(parsed.fields.dispatchUnitCurrent.value).toBe('0,02345678');
+  });
+
+  it('retains periods for numerically equal rates written with different precision', () => {
+    const doc = componentBlocks();
+    doc.pages[0].lines[8].words[2].text = '0.1456789';
+    const parsed = parseDocument('luce', 'current', doc);
+    expect(parsed.conflicts).not.toContain('unitCurrent');
+    expect(parsed.fields.unitCurrent.period).toContain('30/06/2026');
+  });
+
+  it('reads centered price columns whose decimal values start before the header', () => {
+    const doc = componentBlocks();
+    for (const index of [7, 8]) doc.pages[0].lines[index].words[2].x -= 45;
+    expect(parseDocument('luce', 'current', doc).fields.unitCurrent.value).toBe('0,14567890');
+  });
+
+  it('rejects a missing unit or damaged billing period instead of keeping the other month', () => {
+    for (const column of [0, 1]) {
+      const doc = componentBlocks();
+      doc.pages[0].lines[7].words[column].text = column === 0 ? 'DAL illegibile' : '';
+      const parsed = parseDocument('luce', 'current', doc);
+      expect(parsed.fields.unitCurrent).toBeUndefined();
+      expect(parsed.conflicts).toContain('unitCurrent');
+    }
+  });
+
+  it('does not promote an individual band price to a monorate price', () => {
+    const doc = componentBlocks();
+    doc.pages[0].lines[6].words[0].text = 'Corrispettivo Energia F1';
+    expect(parseDocument('luce', 'current', doc).fields.unitCurrent).toBeUndefined();
+  });
   it('reads unit-price table cells, periods and monthly fees without using line totals', () => {
     const parsed = parseDocument('luce', 'current', componentDocument());
     expect(parsed.fields.unitCurrent).toMatchObject({

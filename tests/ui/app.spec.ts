@@ -148,6 +148,7 @@ test('mock native refresh blocks interaction until completion or cancellation is
                   'CoopVoce',
                   'Kena',
                   'Dimensione',
+                  'BBBell',
                 ]
               : ['Bene', 'Allianz'];
         if (command === 'provider_directory' && args.category === 'internet')

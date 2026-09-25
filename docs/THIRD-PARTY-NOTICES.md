@@ -1,5 +1,7 @@
 # Third-party components
 
+The OCR bundle contains Tesseract 5.5.3 (Apache-2.0), Italian `tessdata_best` at revision `e12c65a915945e4c28e237a9b52bc4a8f39a0cec` (Apache-2.0), and statically linked Leptonica and image-codec dependencies from vcpkg revision `dc1232a6e05dcc49703091e83743e3b4df9b9b7c`. Preparation copies each dependency's copyright/license file to `resources/runtime/ocr/licenses`; these files and their checksums are included in the installer. Source archives and the Italian model are pinned by SHA-256 in `scripts/prepare-ocr.ps1`. The generated manifest records the executable and resource hashes. OCR requires no separately installed runtime: the verified executable imports only Windows KERNEL32.dll.
+
 OnlyBollette uses these independently licensed projects. Exact dependency versions are recorded in package-lock.json and src-tauri/Cargo.lock.
 
 | Component                           | License                                           | Upstream                                              |

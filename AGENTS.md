@@ -10,8 +10,8 @@ Windows x64 app for Italian household offers. UI is Italian; code/docs are Engli
 - `npm run prepare:runtime` generates ignored binaries. Do not commit weights, archives, caches or test evidence. User data stays app-local.
 - On this machine Rust is installed under `$env:USERPROFILE\.cargo\bin` without persistent PATH modification.
 - `ONLYBOLLETTE_DATA_DIR` must be absolute and redirects database/models. Native checks use isolated scratch data; `ONLYBOLLETTE_TEST_MODEL` supplies a read-only AI test original. Vite must ignore `.scratch` and `test-results`: locked WebView2 files crash its watcher.
-- Document OCR retains word rectangles in memory. Never store documents/profiles in SQLite, logs or AI caches. Unit estimates need loss/dispatch/DISPbt rules and applicable dates covering 12 months; printed expiry/continuation is insufficient.
+- Bundled Tesseract uses relative `tessdata` from its own directory: extended Windows resource paths break model loading. OCR geometry stays in memory; never save documents/profiles to SQLite, logs or AI caches. Unit estimates require loss/dispatch/DISPbt rules and 12-month applicability; printed expiry/continuation is insufficient.
 
-Verified commands: `npm run build`, `npm test`, `npx playwright test`, `npm run package`, `pwsh -NoProfile -File scripts/build-installer.ps1`, `npm audit`, `cargo test --manifest-path src-tauri/Cargo.toml --lib`, `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`, `pwsh -NoProfile -File scripts/verify-source-values.ps1`, `node scripts/verify-document-layout.mjs`. Native checks may hit intermittent Allianz HTTP 403. Open work is in `PROJECT_STATUS.json`.
+Verified commands are in docs/VERIFICATION.md; open work is in PROJECT_STATUS.json. Native checks may hit intermittent Allianz HTTP 403.
 
 Live checks fail on any failed/partial source or missing calculation parameters; do not bypass access challenges. Failed-refresh warnings are session-only; partial web catalogs replace snapshots and retain their warning. AI checks may download 1.4 GB into dedicated test data.

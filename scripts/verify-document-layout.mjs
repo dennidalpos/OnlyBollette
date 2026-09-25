@@ -19,7 +19,7 @@ try {
     '-OutputPath',
     fixture,
   ]);
-  // Capture synthetic OCR in memory; never print or save the text.
+  // In-memory synthetic OCR (no print/save).
   const output = execFileSync(
     resolve(process.env.USERPROFILE, '.cargo/bin/cargo.exe'),
     [
@@ -116,8 +116,79 @@ try {
   );
   delete fields.applicableUntilCurrent;
   assert.equal(compareDocuments('luce', fields, true, true, parameters).difference, null);
+  const blocksPath = resolve(directory, 'synthetic-blocks.png');
+  execFileSync('pwsh', [
+    '-NoProfile',
+    '-File',
+    resolve(root, 'scripts/create-document-fixture.ps1'),
+    '-OutputPath',
+    blocksPath,
+    '-ComponentBlocks',
+  ]);
+  const blocks = JSON.parse(
+    execFileSync(
+      resolve(process.env.USERPROFILE, '.cargo/bin/cargo.exe'),
+      [
+        'run',
+        '--quiet',
+        '--manifest-path',
+        resolve(root, 'src-tauri/Cargo.toml'),
+        '--example',
+        'verify-document',
+        '--',
+        blocksPath,
+        'Corrispettivo',
+        '--json',
+      ],
+      {
+        encoding: 'utf8',
+        timeout: 180000,
+        windowsHide: true,
+        env: { ...process.env, ONLYBOLLETTE_DATA_DIR: directory },
+      },
+    ),
+  );
+  const blockFields = parseDocument('luce', 'current', blocks).fields;
+  assert.equal(blockFields.unitCurrent?.value, '0,14567890');
+  assert.equal(blockFields.fixedCurrent?.value, '109,48148136');
+  assert.equal(blockFields.dispatchUnitCurrent?.value, '0,02345678');
+  assert.equal(blockFields.commercialAnnualCurrent, undefined);
+  assert.equal(blockFields.commercialModeCurrent, undefined);
+  assert.equal(blockFields.lossPercentCurrent, undefined);
+  assert.equal(blockFields.lossesCurrent, undefined);
+  assert.equal(
+    blockFields.unitCurrent?.period,
+    'DAL 01/05/2026 AL 31/05/2026; DAL 01/06/2026 AL 30/06/2026',
+  );
+  assert.equal(blockFields.unitCurrent?.confirmed, false);
+  assert.equal(blockFields.unitCurrent?.document, 'synthetic-blocks.png');
+  assert.equal(blockFields.unitCurrent?.page, 1);
+  assert.equal(compareDocuments('luce', blockFields, true, true, parameters).difference, null);
+  assert.deepEqual((await readdir(directory)).sort(), [
+    'synthetic-blocks.png',
+    'synthetic-layout.png',
+  ]);
+  const missingPath = resolve(directory, 'synthetic-missing-unit.png');
+  execFileSync('pwsh', ['-NoProfile', '-File', resolve(root, 'scripts/create-document-fixture.ps1'),
+    '-OutputPath', missingPath, '-ComponentBlocks', '-MissingEnergyUnit']);
+  const missing = JSON.parse(execFileSync(resolve(root, 'src-tauri/target/debug/examples/verify-document.exe'),
+    [missingPath, 'Corrispettivo', '--json'], { encoding: 'utf8', windowsHide: true, timeout: 180000 }));
+  const missingResult = parseDocument('luce', 'current', missing);
+  assert.equal(missingResult.fields.unitCurrent, undefined);
+  assert.ok(missingResult.conflicts.includes('unitCurrent'));
+  const validityPath = resolve(directory, 'synthetic-validity.png');
+  execFileSync('pwsh', ['-NoProfile', '-File', resolve(root, 'scripts/create-document-fixture.ps1'),
+    '-OutputPath', validityPath, '-ValidityRange']);
+  const validity = JSON.parse(execFileSync(resolve(root, 'src-tauri/target/debug/examples/verify-document.exe'),
+    [validityPath, 'Validità', '--json'], { encoding: 'utf8', windowsHide: true, timeout: 180000 }));
+  const validityResult = parseDocument('luce', 'current', validity);
+  assert.deepEqual(validityResult.fields.validCurrent, {
+    value: '31/12/2025', document: 'synthetic-validity.png', page: 1, confirmed: false,
+  });
+  assert.equal(validityResult.fields.applicableFromCurrent, undefined);
+  assert.equal(validityResult.fields.applicableUntilCurrent, undefined);
   console.log(
-    'Native OCR and frontend comparison passed; layout, profile, components, validity, provenance and session-only data verified.',
+    'Native OCR and frontend comparison passed; layout, profile, row tables, repeated component blocks, printed validity, provenance and session-only data verified.',
   );
 } catch (error) {
   failure = error;

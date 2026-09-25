@@ -67,7 +67,7 @@ const categorySubtitles = {
 const sourceNames = {
   luce: 'Portale Offerte · Acquirente Unico',
   gas: 'Portale Offerte · Acquirente Unico',
-  internet: '10 fonti ufficiali · copertura in ampliamento',
+  internet: 'Fonti ufficiali · copertura in ampliamento',
   assicurazioni: 'Bene · Allianz',
 };
 const portal = 'https://www.ilportaleofferte.it/portaleOfferte/';
@@ -153,6 +153,7 @@ export default function App() {
       listen<SearchEvent>('search-update', ({ payload }) => {
         if (disposed || payload.requestId !== activeRequest.current) return;
         if (payload.result) {
+          setNow(Date.now());
           setSources((current) => mergeSource(current, payload.result!));
           setCompletedSources((count) => count + 1);
         }
@@ -278,6 +279,7 @@ export default function App() {
         call<string[]>('source_names', { category: target }),
       ]);
       if (epoch !== selectionEpoch.current) return;
+      setNow(Date.now());
       setSources(cached);
       setExpectedSources(expected);
       if (
@@ -571,7 +573,11 @@ export default function App() {
                 </span>
                 <div>
                   <h1>Offerte {categoryNames[category].toLocaleLowerCase('it')}</h1>
-                  <p>{sourceNames[category]}</p>
+                  <p>
+                    {category === 'internet' && expectedSources.length > 0
+                      ? `${expectedSources.length} fonti ufficiali · copertura in ampliamento`
+                      : sourceNames[category]}
+                  </p>
                 </div>
               </div>
               <button

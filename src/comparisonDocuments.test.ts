@@ -58,6 +58,23 @@ describe('document comparison', () => {
     expect(parsed.fields.applicableUntilCurrent).toBeUndefined();
   });
 
+  it('reads the printed end of an economic validity range without extending current terms', () => {
+    const parsed = parseDocument('luce', 'current', {
+      fileName: 'synthetic-validity.pdf',
+      readable: true,
+      pages: [{ number: 2, text: '', lines: [
+        { words: [word('Validità condizioni economiche: dal 01/01/2025 al 31/12/2025', 40, 100)] },
+        { words: [word('Scadenza condizioni economiche', 40, 160)] },
+        { words: [word('Le condizioni continuano ad applicarsi fino alla comunicazione', 40, 200)] },
+      ] }],
+    });
+    expect(parsed.fields.validCurrent).toEqual({
+      value: '31/12/2025', document: 'synthetic-validity.pdf', page: 2, confirmed: false,
+    });
+    expect(parsed.fields.applicableFromCurrent).toBeUndefined();
+    expect(parsed.fields.applicableUntilCurrent).toBeUndefined();
+  });
+
   it('blocks energy comparison without applicable dates even when a continuation clause exists', () => {
     const fields: Fields = Object.fromEntries(
       Object.entries({

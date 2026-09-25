@@ -29,6 +29,13 @@ if (@($servers | Where-Object { -not (Test-Path -LiteralPath $_) }).Count -gt 0)
   if ($LASTEXITCODE -ne 0) { throw "Runtime preparation failed with exit code $LASTEXITCODE." }
 }
 
+if (-not (Test-Path -LiteralPath (Join-Path $runtime 'ocr/manifest.json'))) {
+  & (Join-Path $PSScriptRoot 'prepare-ocr.ps1')
+  if ($LASTEXITCODE -ne 0) { throw 'OCR preparation failed.' }
+}
+& node (Join-Path $PSScriptRoot 'verify-ocr-runtime.mjs')
+if ($LASTEXITCODE -ne 0) { throw 'OCR bundle verification failed.' }
+
 $config = Get-Content -LiteralPath (Join-Path $root 'src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json
 $installer = Join-Path $root "src-tauri/target/release/bundle/nsis/$($config.productName)_$($config.version)_x64-setup.exe"
 $started = Get-Date

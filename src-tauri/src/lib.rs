@@ -19,14 +19,42 @@ pub struct AppState {
     data: PathBuf,
     runtime: PathBuf,
     searches: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    document_jobs: Arc<Mutex<HashMap<String, CancellationToken>>>,
     ai: ai::Ai,
 }
 
 #[tauri::command]
-async fn analyze_document(path: String) -> Result<documents::DocumentAnalysis, String> {
-    tauri::async_runtime::spawn_blocking(move || documents::analyze(&path))
-        .await
-        .map_err(|e| e.to_string())?
+async fn analyze_document(
+    path: String,
+    request_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<documents::DocumentAnalysis, String> {
+    let runtime = state.runtime.clone();
+    let cancel = CancellationToken::new();
+    let jobs = state.document_jobs.clone();
+    {
+        let mut active = jobs.lock().await;
+        if active.contains_key(&request_id) {
+            return Err("Lettura documento già in corso".into());
+        }
+        active.insert(request_id.clone(), cancel.clone());
+    }
+    let result =
+        tauri::async_runtime::spawn_blocking(move || documents::analyze(&path, &runtime, &cancel))
+            .await;
+    jobs.lock().await.remove(&request_id);
+    result.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn cancel_document(
+    request_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    if let Some(token) = state.document_jobs.lock().await.get(&request_id) {
+        token.cancel();
+    }
+    Ok(())
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -263,6 +291,7 @@ pub fn run() {
                 data,
                 runtime,
                 searches: Arc::new(Mutex::new(HashMap::new())),
+                document_jobs: Arc::new(Mutex::new(HashMap::new())),
                 ai: ai::Ai::default(),
             });
             Ok(())
@@ -270,6 +299,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             analyze_document,
+            cancel_document,
             source_names,
             cached_offers,
             provider_directory,
@@ -289,6 +319,9 @@ pub fn run() {
             tauri::async_runtime::block_on(async {
                 let state = handle.state::<AppState>();
                 state.ai.download_cancel.lock().await.cancel();
+                for token in state.document_jobs.lock().await.values() {
+                    token.cancel();
+                }
                 state.ai.inference_cancel.lock().await.cancel();
                 *state.ai.engine.lock().await = None;
             });
