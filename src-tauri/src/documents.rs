@@ -271,14 +271,30 @@ pub fn analyze(
         .and_then(|s| s.to_str())
         .unwrap_or("Documento")
         .to_string();
+    let bytes = std::fs::read(&resolved).map_err(|_| "File non leggibile")?;
+    analyze_bytes(&bytes, &ext, name, runtime, cancel)
+}
+
+pub fn analyze_bytes(
+    bytes: &[u8],
+    ext: &str,
+    name: String,
+    runtime: &Path,
+    cancel: &CancellationToken,
+) -> Result<DocumentAnalysis, String> {
+    if bytes.is_empty() || bytes.len() > 25 * 1024 * 1024 {
+        return Err("Il file deve essere leggibile e non superare 25 MB".into());
+    }
+    if !matches!(ext, "pdf" | "png" | "jpg" | "jpeg" | "bmp" | "tif" | "tiff") {
+        return Err("Formato documento non supportato".into());
+    }
     let root = runtime.join("ocr");
     verify_runtime(&root)?;
     let executor = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|_| OCR_ERROR)?;
-    let bytes = std::fs::read(&resolved).map_err(|_| "File non leggibile")?;
-    let input = memory_stream(&bytes)?;
+    let input = memory_stream(bytes)?;
     let mut pages = Vec::new();
     if ext == "pdf" {
         let pdf = PdfDocument::LoadFromStreamAsync(&input)

@@ -37,6 +37,7 @@ async fn main() -> Result<(), String> {
             url: "https://www.iliad.it/",
         },
         "internet",
+        &root,
     )
     .await;
     if results.error.is_some() || results.partial {

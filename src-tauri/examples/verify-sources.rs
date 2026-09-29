@@ -5,9 +5,16 @@ async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().is_some_and(|s| s == "--inspect") {
         let url = args.get(1).expect("URL");
-        let html = sources::fetch_text(&sources::client().unwrap(), url, 8_000_000)
+        let client = sources::client().unwrap_or_else(|error| {
+            eprintln!("{error}");
+            std::process::exit(1);
+        });
+        let html = sources::fetch_text(&client, url, 8_000_000)
             .await
-            .unwrap();
+            .unwrap_or_else(|error| {
+                eprintln!("{error}");
+                std::process::exit(1);
+            });
         println!(
             "{} bytes, text: {}",
             html.len(),
@@ -39,6 +46,7 @@ async fn main() {
         args
     };
     let mut failed = false;
+    let runtime = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/runtime");
     for category in categories {
         let configs: Vec<_> = sources::sources(&category)
             .expect("valid category")
@@ -53,7 +61,7 @@ async fn main() {
         let mut total = 0;
         for config in configs {
             let start = std::time::Instant::now();
-            let result = sources::fetch(config, &category).await;
+            let result = sources::fetch(config, &category, &runtime).await;
             println!(
                 "{} / {}: {} offers, {:.1}s, {}",
                 category,

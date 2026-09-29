@@ -1,7 +1,7 @@
 use crate::domain::{now, web_url, Offer, SourceResult};
 use regex::Regex;
 use scraper::{Html, Selector};
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashSet, path::Path, time::Duration};
 
 pub const PORTAL: &str = "https://www.ilportaleofferte.it/portaleOfferte/it/open-data.page";
 
@@ -252,8 +252,8 @@ pub fn links(html: &str, base: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-pub async fn fetch(source: Source, category: &str) -> SourceResult {
-    let result = fetch_inner(source, category).await;
+pub async fn fetch(source: Source, category: &str, runtime: &Path) -> SourceResult {
+    let result = fetch_inner(source, category, runtime).await;
     let (electricity_parameters, calculation_error) = if category == "luce" && result.is_ok() {
         match fetch_electricity_parameters().await {
             Ok(parameters) => (Some(parameters), None),
@@ -300,7 +300,11 @@ async fn fetch_electricity_parameters() -> Result<crate::domain::ElectricityPara
     crate::energy::parse_parameters(&csv, &url)
 }
 
-async fn fetch_inner(source: Source, category: &str) -> Result<(Vec<Offer>, bool), String> {
+async fn fetch_inner(
+    source: Source,
+    category: &str,
+    runtime: &Path,
+) -> Result<(Vec<Offer>, bool), String> {
     let client = client()?;
     let html = fetch_text(&client, source.url, 8_000_000).await?;
     if category == "internet" && source.name == "spusu" {
@@ -322,13 +326,111 @@ async fn fetch_inner(source: Source, category: &str) -> Result<(Vec<Offer>, bool
         return parse_enel_fibra(source, &html);
     }
     if category == "internet" && source.name == "Vodafone" {
-        return parse_vodafone(source, &html);
+        let (mut offers, mut partial) = parse_vodafone(source, &html)?;
+        match fetch_vodafone_ultra(&client, source, runtime).await {
+            Ok(offer) => offers.push(offer),
+            Err(error) => {
+                if std::env::var_os("ONLYBOLLETTE_SOURCE_DIAGNOSTICS").is_some() {
+                    eprintln!("source-document Vodafone Casa Ultra: {error}");
+                }
+                partial = true;
+                for offer in &mut offers {
+                    offer.conditions.push("Catalogo Vodafone parziale: Casa Ultra non verificabile nel prospetto ufficiale.".into());
+                }
+            }
+        }
+        return Ok((offers, partial));
     }
     if category == "internet" && source.name == "1Mobile" {
-        return parse_unomobile(source, &html);
+        let (mut offers, _) = parse_unomobile(source, &html)?;
+        let mut partial = false;
+        let catalog_url = "https://www.unomobile.it/offerte/per-tutti";
+        let catalog = match fetch_text(&client, catalog_url, 8_000_000).await {
+            Ok(page) => parse_unomobile_catalog(&page),
+            Err(error) => Err(error),
+        };
+        let listed = match catalog {
+            Ok(listed) => listed,
+            Err(_) => {
+                partial = true;
+                HashSet::new()
+            }
+        };
+        let expected: HashSet<_> = [
+            "start-xplus-reward",
+            "speed-5g-180",
+            "speed-5g-250",
+            "flash-120",
+            "world-plus-5g",
+            "flash-5g-320-lim-edition",
+            "xconnect",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        if listed != expected {
+            partial = true;
+        }
+        for (slug, gigabytes) in [("speed-5g-180", 180), ("speed-5g-250", 250)] {
+            let url = format!("https://www.unomobile.it/offerte/{slug}");
+            match fetch_text(&client, &url, 8_000_000).await {
+                Ok(page) => match parse_unomobile_speed(source, &url, gigabytes, &page) {
+                    Ok(offer) => offers.push(offer),
+                    Err(_) => partial = true,
+                },
+                Err(_) => partial = true,
+            }
+        }
+        for slug in ["flash-120", "world-plus-5g", "flash-5g-320-lim-edition"] {
+            let url = format!("https://www.unomobile.it/offerte/{slug}");
+            match fetch_text(&client, &url, 8_000_000).await {
+                Ok(page) => match parse_unomobile_extra(source, &url, slug, &page) {
+                    Ok(offer) => offers.push(offer),
+                    Err(_) => partial = true,
+                },
+                Err(_) => partial = true,
+            }
+        }
+        if listed.contains("xconnect") {
+            let url = "https://www.unomobile.it/offerte/xconnect";
+            match fetch_text(&client, url, 8_000_000).await {
+                Ok(page) => match parse_unomobile_xconnect(source, url, &page) {
+                    Ok(offer) => offers.push(offer),
+                    Err(_) => partial = true,
+                },
+                Err(_) => partial = true,
+            }
+        }
+        if partial {
+            for offer in &mut offers {
+                offer
+                    .conditions
+                    .push("Catalogo 1Mobile parziale: alcune schede non sono leggibili.".into());
+            }
+        }
+        return Ok((offers, partial));
     }
     if category == "internet" && source.name == "ho." {
-        return parse_ho_home(source, &html);
+        let (mut offers, _) = parse_ho_home(source, &html)?;
+        let catalog_url = "https://www.ho-mobile.it/tutte-le-offerte";
+        let partial = match fetch_text(&client, catalog_url, 8_000_000).await {
+            Ok(catalog) => match parse_ho_mobile_catalog(source, catalog_url, &catalog) {
+                Ok((mobile, partial)) => {
+                    offers.extend(mobile);
+                    partial
+                }
+                Err(_) => true,
+            },
+            Err(_) => true,
+        };
+        if partial {
+            for offer in &mut offers {
+                offer
+                    .conditions
+                    .push("Catalogo ho. parziale: alcune schede non sono leggibili.".into());
+            }
+        }
+        return Ok((offers, partial));
     }
     if matches!(category, "luce" | "gas") {
         let key = if category == "luce" {
@@ -478,18 +580,28 @@ pub(crate) fn is_product_url(source: &str, url: &str, category: &str) -> bool {
             }
             "Vodafone" => {
                 u.scheme() == "https"
-                    && u.host_str() == Some("privati.vodafone.it")
-                    && p == "/casa/fibra"
+                    && ((u.host_str() == Some("privati.vodafone.it") && p == "/casa/fibra")
+                        || (u.host_str() == Some("www.vodafone.it")
+                            && p == "/privati/area-supporto/contratti-aggiornamenti/condizioni-generali-reti-servizi/tariffe/contratti-attivabili/casa-ultra.html"))
             }
             "1Mobile" => {
                 u.scheme() == "https"
                     && u.host_str() == Some("www.unomobile.it")
-                    && p == "/offerte/start-xplus-reward"
+                    && matches!(
+                        p,
+                        "/offerte/start-xplus-reward"
+                            | "/offerte/speed-5g-180"
+                            | "/offerte/speed-5g-250"
+                            | "/offerte/flash-120"
+                            | "/offerte/world-plus-5g"
+                            | "/offerte/flash-5g-320-lim-edition"
+                            | "/offerte/xconnect"
+                    )
             }
             "ho." => {
                 u.scheme() == "https"
                     && u.host_str() == Some("www.ho-mobile.it")
-                    && p == "/offer-home"
+                    && matches!(p, "/offer-home" | "/tutte-le-offerte")
             }
             "spusu" => {
                 u.scheme() == "https"
@@ -910,6 +1022,101 @@ fn parse_ho_home(source: Source, html: &str) -> Result<(Vec<Offer>, bool), Strin
     Ok((offers, false))
 }
 
+fn parse_ho_mobile_catalog(
+    source: Source,
+    catalog_url: &str,
+    html: &str,
+) -> Result<(Vec<Offer>, bool), String> {
+    let doc = Html::parse_document(html);
+    let cards: Vec<_> = doc
+        .select(&selector(
+            ".offerCarousel__allOffers .offerCarousel__slider__card[data-offerlink]",
+        ))
+        .collect();
+    if cards.is_empty() {
+        return Err("Catalogo mobile ho. non leggibile. Consultare la fonte ufficiale.".into());
+    }
+    let mut offers = Vec::new();
+    let mut partial = false;
+    let price_pattern = Regex::new(r"^\d{1,3},\d{2}$").expect("ho. mobile price");
+    for (slug, gigabytes) in [("132", 150), ("133", 250), ("134", 150), ("135", 250)] {
+        let path = format!("/flussi-attivazione.{slug}.html");
+        let Some(card) = cards
+            .iter()
+            .find(|card| card.value().attr("data-offerlink") == Some(path.as_str()))
+        else {
+            partial = true;
+            continue;
+        };
+        let field = |css: &str| {
+            card.select(&selector(css))
+                .next()
+                .map(|node| clean(&node.text().collect::<Vec<_>>().join(" ")))
+                .unwrap_or_default()
+        };
+        let data = field(".offerCarousel__slider__card__stripe__firstLine");
+        let inclusion = field(".offerCarousel__slider__card__stripe__secondLine");
+        let euros = field(".offerCarousel__slider__card__price__value");
+        let cents = field(".offerCarousel__slider__card__price__details__cent");
+        let currency = field(".offerCarousel__slider__card__price__details__currency");
+        let frequency = field(".offerCarousel__slider__card__price__details__frequency");
+        let activation = field(".offerCarousel__slider__card__activationInfo");
+        let label = field(".offerCarousel__slider__card__label");
+        let price = format!("{euros}{cents}");
+        if data != format!("{gigabytes} Giga")
+            || inclusion != "Minuti illimitati e 200 SMS"
+            || !price_pattern.is_match(&price)
+            || currency != "€"
+            || frequency != "al mese"
+            || !activation.contains("Attivazione a partire da 2,99€")
+            || !activation.contains("alcuni operatori")
+            || !matches!(label.as_str(), "Offerta 5G!" | "5G incluso!")
+        {
+            partial = true;
+            continue;
+        }
+        let monthly = price
+            .replace(',', ".")
+            .parse::<f64>()
+            .map_err(|_| "Canone mobile ho. non leggibile")?;
+        if monthly <= 0.0 {
+            partial = true;
+            continue;
+        }
+        offers.push(Offer {
+            id: format!("{catalog_url}#{slug}"),
+            category: "internet".into(),
+            subcategory: "mobile".into(),
+            provider: source.name.into(),
+            name: format!("ho. {gigabytes} Giga 5G ({price} €/mese)"),
+            description: format!("{gigabytes} GB, minuti illimitati e 200 SMS"),
+            url: catalog_url.into(),
+            source: source.name.into(),
+            source_url: catalog_url.into(),
+            fetched_at: now(),
+            valid_until: None,
+            price_type: "advertised".into(),
+            monthly_price: Some(monthly),
+            first_year_cost: None,
+            components: vec![],
+            conditions: vec![
+                "Canone pubblicizzato, non costo totale annuo. Verificare copertura 5G e condizioni applicabili.".into(),
+                "Attivazione a partire da 2,99 € solo per alcuni operatori; verificare l'importo applicabile alla propria provenienza.".into(),
+            ],
+            evidence: format!("{label} {data} {inclusion} {price} € {frequency} {activation}"),
+            evidence_version: 1,
+            restricted: true,
+            electricity_rates: None,
+        });
+    }
+    if offers.is_empty() {
+        return Err(
+            "Nessuna offerta mobile ho. verificabile. Consultare la fonte ufficiale.".into(),
+        );
+    }
+    Ok((offers, partial))
+}
+
 fn source_fragment_text(fragment: &str) -> String {
     let text = clean(
         &Html::parse_fragment(fragment)
@@ -931,10 +1138,9 @@ fn source_fragment_text(fragment: &str) -> String {
     }
 }
 
-fn parse_unomobile(source: Source, html: &str) -> Result<(Vec<Offer>, bool), String> {
+fn unomobile_bundle(html: &str) -> Result<serde_json::Value, String> {
     let doc = Html::parse_document(html);
-    let bundle = doc
-        .select(&selector("script"))
+    doc.select(&selector("script"))
         .filter_map(|script| {
             let script = script.text().collect::<String>();
             let start = script.find("window.bundle = ")? + "window.bundle = ".len();
@@ -944,7 +1150,133 @@ fn parse_unomobile(source: Source, html: &str) -> Result<(Vec<Offer>, bool), Str
                 .ok()
         })
         .next()
-        .ok_or("Scheda 1Mobile non leggibile. Consultare la fonte ufficiale.")?;
+        .ok_or("Scheda 1Mobile non leggibile. Consultare la fonte ufficiale.".into())
+}
+
+fn parse_unomobile_catalog(html: &str) -> Result<HashSet<String>, String> {
+    let doc = Html::parse_document(html);
+    let bundles = doc
+        .select(&selector("script"))
+        .find_map(|script| {
+            let script = script.text().collect::<String>();
+            let start = script.find("const bundles = ")? + "const bundles = ".len();
+            serde_json::Deserializer::from_str(&script[start..])
+                .into_iter::<Vec<serde_json::Value>>()
+                .next()?
+                .ok()
+        })
+        .ok_or("Catalogo completo 1Mobile non leggibile")?;
+    let mut slugs = HashSet::new();
+    for bundle in bundles {
+        if bundle.get("publish").and_then(|v| v.as_i64()) != Some(1) {
+            continue;
+        }
+        let slug = bundle
+            .get("url")
+            .and_then(|v| v.as_str())
+            .ok_or("Percorso offerta 1Mobile non leggibile")?;
+        if slug.is_empty()
+            || slug.len() > 80
+            || !slug
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            || !slugs.insert(slug.to_string())
+        {
+            return Err("Catalogo 1Mobile contiene percorsi non verificabili".into());
+        }
+    }
+    if slugs.is_empty() {
+        return Err("Catalogo completo 1Mobile vuoto".into());
+    }
+    Ok(slugs)
+}
+
+fn parse_unomobile_xconnect(source: Source, url: &str, html: &str) -> Result<Offer, String> {
+    let bundle = unomobile_bundle(html)?;
+    if bundle.get("name").and_then(|v| v.as_str()) != Some("XConnect")
+        || bundle.get("url").and_then(|v| v.as_str()) != Some("xconnect")
+        || bundle.get("publish").and_then(|v| v.as_i64()) != Some(1)
+        || bundle.get("data").and_then(|v| v.as_str()) != Some("1")
+        || bundle.get("sms").and_then(|v| v.as_str()) != Some("50")
+        || bundle.get("min").and_then(|v| v.as_str()) != Some("100")
+    {
+        return Err("Dotazione XConnect non verificabile".into());
+    }
+    let overview = source_fragment_text(
+        bundle
+            .get("overview")
+            .and_then(|v| v.as_str())
+            .ok_or("Condizioni XConnect non leggibili")?,
+    );
+    let note = source_fragment_text(
+        bundle
+            .get("note")
+            .and_then(|v| v.as_str())
+            .ok_or("Note XConnect non leggibili")?,
+    );
+    let activation = source_fragment_text(
+        bundle
+            .get("activation_info")
+            .and_then(|v| v.as_str())
+            .ok_or("Attivazione XConnect non leggibile")?,
+    );
+    let price_pattern = Regex::new(r"prezzo (\d+),(\d{2})€/mese fino al (\d{2}/\d{2}/\d{4})")
+        .expect("XConnect price and deadline");
+    let captures = price_pattern
+        .captures(&note)
+        .ok_or("Canone XConnect non verificabile")?;
+    let monthly = format!("{}.{}", &captures[1], &captures[2])
+        .parse::<f64>()
+        .map_err(|_| "Canone XConnect non leggibile")?;
+    let deadline = &captures[3];
+    let valid_until = chrono::NaiveDate::parse_from_str(deadline, "%d/%m/%Y")
+        .map_err(|_| "Scadenza XConnect non valida")?
+        .format("%Y-%m-%d")
+        .to_string();
+    if monthly <= 0.0
+        || bundle.get("price").and_then(|v| v.as_f64()) != Some(monthly)
+        || !overview.contains("Internet of things")
+        || !overview.contains("10€")
+        || !overview.contains(&format!("fino al {deadline}"))
+        || !activation.contains("10€")
+        || !note.contains("si rinnova in automatico ogni mese")
+    {
+        return Err("Prezzi o condizioni XConnect discordanti".into());
+    }
+    let offer = Offer {
+        id: url.into(),
+        category: "internet".into(),
+        subcategory: "mobile".into(),
+        provider: source.name.into(),
+        name: "XConnect".into(),
+        description: "SIM IoT/domotica: 1 GB, 100 minuti e 50 SMS".into(),
+        url: url.into(),
+        source: source.name.into(),
+        source_url: url.into(),
+        fetched_at: now(),
+        valid_until: Some(valid_until),
+        price_type: "advertised".into(),
+        monthly_price: Some(monthly),
+        first_year_cost: None,
+        components: vec![],
+        conditions: vec![
+            "Offerta per dispositivi IoT e domotica; 1 GB, 100 minuti e 50 SMS al mese.".into(),
+            format!("Canone {monthly:.2} €/mese e attivazione 10 €. Verificare l'eventuale costo SIM separato."),
+            format!("Sottoscrivibile alle condizioni pubblicate fino al {deadline}; questa data non garantisce dodici mesi di prezzo."),
+        ],
+        evidence: format!("{overview}\n{activation}\n{note}"),
+        evidence_version: 1,
+        restricted: true,
+        electricity_rates: None,
+    };
+    if !offer.active() {
+        return Err("Offerta XConnect non più sottoscrivibile alle condizioni pubblicate.".into());
+    }
+    Ok(offer)
+}
+
+fn parse_unomobile(source: Source, html: &str) -> Result<(Vec<Offer>, bool), String> {
+    let bundle = unomobile_bundle(html)?;
     if bundle.get("name").and_then(|v| v.as_str()) != Some("Start XPlus Reward")
         || bundle.get("publish").and_then(|v| v.as_i64()) != Some(1)
     {
@@ -1042,6 +1374,236 @@ fn parse_unomobile(source: Source, html: &str) -> Result<(Vec<Offer>, bool), Str
         return Err("Offerta 1Mobile non più sottoscrivibile alle condizioni pubblicate.".into());
     }
     Ok((vec![offer], false))
+}
+
+fn parse_unomobile_speed(
+    source: Source,
+    url: &str,
+    gigabytes: u16,
+    html: &str,
+) -> Result<Offer, String> {
+    let bundle = unomobile_bundle(html)?;
+    let name = format!("Speed 5G {gigabytes}");
+    if bundle.get("name").and_then(|v| v.as_str()).map(str::trim) != Some(name.as_str())
+        || bundle.get("publish").and_then(|v| v.as_i64()) != Some(1)
+    {
+        return Err("Scheda Speed 5G non verificabile. Consultare la fonte ufficiale.".into());
+    }
+    let overview = source_fragment_text(
+        bundle
+            .get("overview")
+            .and_then(|v| v.as_str())
+            .ok_or("Condizioni Speed 5G non leggibili")?,
+    );
+    let note = source_fragment_text(
+        bundle
+            .get("note")
+            .and_then(|v| v.as_str())
+            .ok_or("Note Speed 5G non leggibili")?,
+    );
+    let activation = clean(
+        bundle
+            .get("activation_info")
+            .and_then(|v| v.as_str())
+            .ok_or("Attivazione Speed 5G non leggibile")?,
+    );
+    let price_pattern = Regex::new(
+        r"prezzo (\d+(?:,\d{2})?)€/mese per il primo mese e (\d+,\d{2})€ dal (?:2°|secondo) mese fino al\s*(\d{2}/\d{2}/\d{4})",
+    )
+    .expect("Speed 5G renewal prices");
+    let captures = price_pattern
+        .captures(&note)
+        .ok_or("Canoni Speed 5G non verificabili")?;
+    let initial = captures[1]
+        .replace(',', ".")
+        .parse::<f64>()
+        .map_err(|_| "Canone iniziale Speed 5G non leggibile")?;
+    let later = captures[2]
+        .replace(',', ".")
+        .parse::<f64>()
+        .map_err(|_| "Canone successivo Speed 5G non leggibile")?;
+    let deadline = &captures[3];
+    let subscription_end = chrono::NaiveDate::parse_from_str(deadline, "%d/%m/%Y")
+        .map_err(|_| "Scadenza Speed 5G non valida")?
+        .format("%Y-%m-%d")
+        .to_string();
+    if initial <= 0.0
+        || later <= 0.0
+        || bundle.get("price").and_then(|v| v.as_f64()) != Some(initial)
+        || !overview.contains(&format!("fino al {deadline}"))
+        || !overview.contains("nuovi clienti in portabilità da tutti gli operatori")
+        || !overview.contains("nuovi numeri")
+        || !activation.contains("GRATUITO in portabilità da TUTTI GLI OPERATORI")
+        || !activation.contains("5€ per le nuove SIM")
+        || bundle.get("data").and_then(|v| v.as_str()) != Some(gigabytes.to_string().as_str())
+        || !source_fragment_text(
+            bundle
+                .get("additional_data")
+                .and_then(|v| v.as_str())
+                .unwrap_or(""),
+        )
+        .contains(&format!("{gigabytes} GB in 5G"))
+    {
+        return Err(
+            "Prezzi o condizioni Speed 5G discordanti. Consultare la fonte ufficiale.".into(),
+        );
+    }
+    let offer = Offer {
+        id: url.into(),
+        category: "internet".into(),
+        subcategory: "mobile".into(),
+        provider: source.name.into(),
+        name,
+        description: format!("Offerta mobile {gigabytes} GB 5G"),
+        url: url.into(),
+        source: source.name.into(),
+        source_url: url.into(),
+        fetched_at: now(),
+        valid_until: Some(subscription_end),
+        price_type: "advertised".into(),
+        monthly_price: Some(initial),
+        first_year_cost: None,
+        components: vec![],
+        conditions: vec![
+            format!("Primo mese: {initial:.2} €; dal secondo mese: {later:.2} €/mese. Il canone mostrato non è un costo annuo."),
+            format!("Sottoscrivibile alle condizioni pubblicate fino al {deadline}; questa data non garantisce dodici mesi di prezzo."),
+            "Attivazione gratuita in portabilità da tutti gli operatori; 5 € per una nuova SIM. Verificare il completamento della portabilità entro il primo rinnovo.".into(),
+        ],
+        evidence: format!("{overview}\n{activation}\n{note}"),
+        evidence_version: 1,
+        restricted: true,
+        electricity_rates: None,
+    };
+    if !offer.active() {
+        return Err("Offerta Speed 5G non più sottoscrivibile alle condizioni pubblicate.".into());
+    }
+    Ok(offer)
+}
+
+fn parse_unomobile_extra(
+    source: Source,
+    url: &str,
+    slug: &str,
+    html: &str,
+) -> Result<Offer, String> {
+    let (name, gigabytes, activation_cost) = match slug {
+        "flash-120" => ("Flash 120", "120", 4),
+        "world-plus-5g" => ("World Plus 5G", "130", 5),
+        "flash-5g-320-lim-edition" => ("Flash 5G 320 Limited Edition", "320", 10),
+        _ => return Err("Scheda 1Mobile non prevista".into()),
+    };
+    let bundle = unomobile_bundle(html)?;
+    if bundle.get("name").and_then(|v| v.as_str()).map(str::trim) != Some(name)
+        || bundle.get("publish").and_then(|v| v.as_i64()) != Some(1)
+        || bundle.get("data").and_then(|v| v.as_str()) != Some(gigabytes)
+    {
+        return Err("Scheda 1Mobile non verificabile. Consultare la fonte ufficiale.".into());
+    }
+    let overview = source_fragment_text(
+        bundle
+            .get("overview")
+            .and_then(|v| v.as_str())
+            .ok_or("Condizioni 1Mobile non leggibili")?,
+    );
+    let note = source_fragment_text(
+        bundle
+            .get("note")
+            .and_then(|v| v.as_str())
+            .ok_or("Note 1Mobile non leggibili")?,
+    );
+    let activation = source_fragment_text(
+        bundle
+            .get("activation_info")
+            .and_then(|v| v.as_str())
+            .ok_or("Attivazione 1Mobile non leggibile")?,
+    );
+    let (initial, later, deadline) = if slug == "flash-5g-320-lim-edition" {
+        let pattern = Regex::new(r"prezzo (\d+,\d{2})€/mese per il primo mese, (\d+,\d{2})€ dal secondo mese e un ulteriore mese omaggio al completamento del primo rinnovo fino al\s*(\d{2}/\d{2}/\d{4})")
+            .expect("Flash 320 price and bonus");
+        let c = pattern
+            .captures(&note)
+            .ok_or("Canoni Flash 320 non verificabili")?;
+        (c[1].to_string(), Some(c[2].to_string()), c[3].to_string())
+    } else {
+        let pattern = Regex::new(r"prezzo(?: di)? (\d+,\d{2})€/mese fino al\s*(\d{2}/\d{2}/\d{4})")
+            .expect("1Mobile extra monthly price");
+        let c = pattern
+            .captures(&note)
+            .ok_or("Canone 1Mobile non verificabile")?;
+        (c[1].to_string(), None, c[2].to_string())
+    };
+    let monthly = initial
+        .replace(',', ".")
+        .parse::<f64>()
+        .map_err(|_| "Canone 1Mobile non leggibile")?;
+    let renewed = later
+        .as_deref()
+        .map(|value| value.replace(',', ".").parse::<f64>())
+        .transpose()
+        .map_err(|_| "Rinnovo 1Mobile non leggibile")?;
+    let valid_until = chrono::NaiveDate::parse_from_str(&deadline, "%d/%m/%Y")
+        .map_err(|_| "Scadenza 1Mobile non valida")?
+        .format("%Y-%m-%d")
+        .to_string();
+    let activation_lower = activation.to_lowercase();
+    if monthly <= 0.0
+        || renewed.is_some_and(|value| value <= 0.0)
+        || bundle.get("price").and_then(|v| v.as_f64()) != Some(monthly)
+        || !overview.contains(&format!("fino al {deadline}"))
+        || !overview.contains("nuovi numeri")
+        || !activation.contains(&format!("{activation_cost}€"))
+        || !activation_lower.contains("portabilità da tutti gli operatori")
+        || !(activation_lower.contains("gratuito") || activation_lower.contains("gratis"))
+        || !note.contains("entro il primo rinnovo")
+        || (slug == "world-plus-5g"
+            && !(note.contains("3° rinnovo consecutivo") && note.contains("20GB")))
+        || (slug == "flash-5g-320-lim-edition"
+            && !(note.contains("credito viene erogato immediatamente dopo il primo rinnovo")
+                && note.contains("non da diritto ad alcun rimborso")))
+    {
+        return Err(
+            "Prezzi o condizioni 1Mobile discordanti. Consultare la fonte ufficiale.".into(),
+        );
+    }
+    let mut conditions = vec![
+        format!("Sottoscrivibile alle condizioni pubblicate fino al {deadline}; questa data non garantisce dodici mesi di prezzo."),
+        format!("Attivazione gratuita in portabilità da tutti gli operatori; {activation_cost} € per una nuova SIM. La portabilità deve completarsi entro il primo rinnovo."),
+    ];
+    if let Some(renewed) = renewed {
+        conditions.push(format!("Primo mese: {monthly:.2} €; dal secondo mese: {renewed:.2} €/mese. Il canone mostrato non è un costo annuo."));
+        conditions.push("Una mensilità omaggio viene accreditata dopo il primo rinnovo completato; il credito non è rimborsabile e può essere recuperato se la portabilità non si completa.".into());
+    } else {
+        conditions.push("Canone mensile pubblicizzato; non è un costo annuo.".into());
+    }
+    if slug == "world-plus-5g" {
+        conditions.push("20 GB aggiuntivi dal terzo rinnovo consecutivo; verificare l'idoneità dei nuovi numeri nelle condizioni dell'offerta.".into());
+    }
+    let offer = Offer {
+        id: url.into(),
+        category: "internet".into(),
+        subcategory: "mobile".into(),
+        provider: source.name.into(),
+        name: name.into(),
+        description: format!("Offerta mobile {gigabytes} GB"),
+        url: url.into(),
+        source: source.name.into(),
+        source_url: url.into(),
+        fetched_at: now(),
+        valid_until: Some(valid_until),
+        price_type: "advertised".into(),
+        monthly_price: Some(monthly),
+        first_year_cost: None,
+        components: vec![],
+        conditions,
+        evidence: format!("{overview}\n{activation}\n{note}"),
+        evidence_version: 1,
+        restricted: true,
+        electricity_rates: None,
+    };
+    if !offer.active() {
+        return Err("Offerta 1Mobile non più sottoscrivibile alle condizioni pubblicate.".into());
+    }
+    Ok(offer)
 }
 
 fn parse_spusu(source: Source, json: &str) -> Result<(Vec<Offer>, bool), String> {
@@ -1235,6 +1797,99 @@ fn parse_vodafone(source: Source, html: &str) -> Result<(Vec<Offer>, bool), Stri
         }
     }
     Ok((offers, partial))
+}
+
+async fn fetch_vodafone_ultra(
+    client: &reqwest::Client,
+    source: Source,
+    runtime: &Path,
+) -> Result<Offer, String> {
+    const SUPPORT: &str = "https://www.vodafone.it/privati/area-supporto/contratti-aggiornamenti/condizioni-generali-reti-servizi/tariffe/contratti-attivabili/casa-ultra.html";
+    let page = fetch_text(client, SUPPORT, 2_000_000).await?;
+    if !page.contains("FTTH") || !page.contains("FTTC") {
+        return Err("Tecnologie Casa Ultra non verificabili nella pagina ufficiale".into());
+    }
+    let pattern = Regex::new(r#"https://www\.vodafone\.it/nw/[^"\s<>]+/Casa_Ultra\.pdf"#)
+        .expect("Vodafone public prospectus URL");
+    let pdf_url = pattern
+        .find(&page)
+        .map(|m| m.as_str().to_string())
+        .ok_or("Prospetto Casa Ultra non collegato dalla pagina ufficiale")?;
+    let bytes = fetch_bytes(client, &pdf_url, 2_000_000).await?;
+    if !bytes.starts_with(b"%PDF-") {
+        return Err("Prospetto Casa Ultra non è un PDF leggibile".into());
+    }
+    let runtime = runtime.to_path_buf();
+    let document = tokio::task::spawn_blocking(move || {
+        crate::documents::analyze_bytes(
+            &bytes,
+            "pdf",
+            "Casa_Ultra.pdf".into(),
+            &runtime,
+            &tokio_util::sync::CancellationToken::new(),
+        )
+    })
+    .await
+    .map_err(|_| "Lettura prospetto Casa Ultra interrotta")??;
+    let text = document
+        .pages
+        .iter()
+        .map(|page| page.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    parse_vodafone_ultra_text(source, SUPPORT, &pdf_url, &text)
+}
+
+fn parse_vodafone_ultra_text(
+    source: Source,
+    support_url: &str,
+    pdf_url: &str,
+    text: &str,
+) -> Result<Offer, String> {
+    let normalized = clean(text);
+    let lower = normalized.to_lowercase();
+    if !lower.contains("casa ultra") || !lower.contains("fibra") || !lower.contains("fttc") {
+        return Err("Nome o tecnologie Casa Ultra non verificabili nel prospetto".into());
+    }
+    let price_pattern =
+        Regex::new(r"(?i)(?:prezzo dell.offerta.{0,60}?|euro/mese\s+)(\d{1,3})[,.](\d{2})")
+            .expect("Vodafone public monthly price");
+    let captures = price_pattern
+        .captures(&normalized)
+        .ok_or("Canone Casa Ultra non verificabile nel prospetto")?;
+    let monthly = format!("{}.{}", &captures[1], &captures[2])
+        .parse::<f64>()
+        .map_err(|_| "Canone Casa Ultra non leggibile")?;
+    let activation_pattern = Regex::new(r"(?i)già clienti euro 0 0.{0,60}prezzo attiva.{0,60}nuovi clienti nativi euro 0 0.{0,60}nuovi clienti in portabilità euro 0 0")
+        .expect("Vodafone activation table");
+    if monthly <= 0.0 || !activation_pattern.is_match(&normalized) {
+        return Err("Condizioni Casa Ultra incomplete nel prospetto".into());
+    }
+    Ok(Offer {
+        id: format!("{}#casa-ultra", source.url),
+        category: "internet".into(),
+        subcategory: "casa".into(),
+        provider: source.name.into(),
+        name: "Vodafone Casa Ultra".into(),
+        description: "Fibra FTTH o FTTC, secondo copertura".into(),
+        url: support_url.into(),
+        source: source.name.into(),
+        source_url: pdf_url.into(),
+        fetched_at: now(),
+        valid_until: None,
+        price_type: "advertised".into(),
+        monthly_price: Some(monthly),
+        first_year_cost: None,
+        components: vec![],
+        conditions: vec![
+            "Canone del prospetto ufficiale per FTTH/FTTC; la tecnologia e la copertura dipendono dall'indirizzo. FWA non inclusa in questa scheda.".into(),
+            "Il prospetto indica attivazione a 0 € per clienti esistenti, nuovi clienti e portabilità. Verificare eventuali sconti con linea mobile e condizioni applicabili; il canone non è un totale annuo.".into(),
+        ],
+        evidence: text.into(),
+        evidence_version: 1,
+        restricted: true,
+        electricity_rates: None,
+    })
 }
 
 fn json_product(value: &serde_json::Value) -> Option<&serde_json::Value> {
@@ -1539,6 +2194,201 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ho_mobile_catalog_keeps_each_card_and_partial_warning_scoped() {
+        let source = Source {
+            name: "ho.",
+            url: "https://www.ho-mobile.it/offer-home",
+        };
+        let catalog_url = "https://www.ho-mobile.it/tutte-le-offerte";
+        let card = |slug: &str, data: &str, euros: &str| {
+            format!(
+                r#"<div class="offerCarousel__slider__card" data-offerlink="/flussi-attivazione.{slug}.html">
+                <div class="offerCarousel__slider__card__label">Offerta 5G!</div>
+                <div class="offerCarousel__slider__card__stripe__firstLine">{data} Giga</div>
+                <div class="offerCarousel__slider__card__stripe__secondLine">Minuti illimitati e 200 SMS</div>
+                <div class="offerCarousel__slider__card__price__value">{euros}</div>
+                <div class="offerCarousel__slider__card__price__details__cent">,95</div>
+                <div class="offerCarousel__slider__card__price__details__currency">€</div>
+                <div class="offerCarousel__slider__card__price__details__frequency">al mese</div>
+                <div class="offerCarousel__slider__card__activationInfo">Attivazione a partire da 2,99€ per alcuni operatori</div>
+                </div>"#
+            )
+        };
+        let html = format!(
+            "<div class='offerCarousel__allOffers'>{}{}{}{}</div>",
+            card("132", "150", "6"),
+            card("133", "250", "8"),
+            card("134", "150", "9"),
+            card("135", "250", "11")
+        );
+        let (offers, partial) = parse_ho_mobile_catalog(source, catalog_url, &html).unwrap();
+        assert!(!partial);
+        assert_eq!(offers.len(), 4);
+        assert_eq!(
+            offers
+                .iter()
+                .map(|offer| offer.monthly_price)
+                .collect::<Vec<_>>(),
+            [Some(6.95), Some(8.95), Some(9.95), Some(11.95)]
+        );
+        assert!(offers.iter().all(|offer| {
+            offer.first_year_cost.is_none()
+                && offer.valid_until.is_none()
+                && offer.restricted
+                && offer.source_url == catalog_url
+                && offer
+                    .conditions
+                    .iter()
+                    .any(|c| c.contains("alcuni operatori"))
+        }));
+        assert!(is_product_url(source.name, &offers[0].url, "internet"));
+        let incomplete = html.replace("200 SMS", "100 SMS");
+        assert!(parse_ho_mobile_catalog(source, catalog_url, &incomplete).is_err());
+        let incomplete = html.replace("11</div>", "da 11</div>");
+        let (offers, partial) = parse_ho_mobile_catalog(source, catalog_url, &incomplete).unwrap();
+        assert!(partial);
+        assert_eq!(offers.len(), 3);
+    }
+
+    #[test]
+    fn unomobile_speed_keeps_intro_and_renewal_prices_separate() {
+        let source = Source {
+            name: "1Mobile",
+            url: "https://www.unomobile.it/offerte/start-xplus-reward",
+        };
+        let url = "https://www.unomobile.it/offerte/speed-5g-180";
+        let bundle = serde_json::json!({
+            "name": "Speed 5G 180",
+            "publish": 1,
+            "price": 5,
+            "data": "180",
+            "additional_data": "<p>180 GB in 5G</p>",
+            "overview": "Offerta Valida in promozione fino al 30/09/2099 per i nuovi clienti in portabilità da tutti gli operatori e nuovi numeri",
+            "activation_info": "Costo di attivazione GRATUITO in portabilità da TUTTI GLI OPERATORI, 5€ per le nuove SIM",
+            "note": "L’offerta Speed 5G 180 è attivabile al prezzo 5€/mese per il primo mese e 6,99€ dal secondo mese fino al&nbsp;30/09/2099"
+        });
+        let html = format!("<script>window.bundle = {bundle};</script>");
+        let offer = parse_unomobile_speed(source, url, 180, &html).unwrap();
+        assert_eq!(offer.monthly_price, Some(5.0));
+        assert_eq!(offer.first_year_cost, None);
+        assert_eq!(offer.valid_until.as_deref(), Some("2099-09-30"));
+        assert!(offer.conditions.iter().any(|c| c.contains("6.99")));
+        assert_eq!(offer.source_url, url);
+        assert!(is_product_url(source.name, &offer.url, "internet"));
+        let inconsistent = html.replace("\"price\":5", "\"price\":4");
+        assert!(parse_unomobile_speed(source, url, 180, &inconsistent).is_err());
+        let inconsistent = html.replace("180 GB in 5G", "250 GB in 5G");
+        assert!(parse_unomobile_speed(source, url, 180, &inconsistent).is_err());
+    }
+
+    #[test]
+    fn unomobile_extra_cards_keep_bonus_activation_and_deadline_scoped() {
+        let source = Source {
+            name: "1Mobile",
+            url: "https://www.unomobile.it/offerte/start-xplus-reward",
+        };
+        for (slug, name, data, price, activation, note) in [
+            (
+                "flash-120",
+                "Flash 120",
+                "120",
+                5.99,
+                "Costo di attivazione GRATUITO in portabilità da TUTTI GLI OPERATORI, 4€ per le nuove SIM",
+                "L’offerta Flash 120 è attivabile al prezzo di 5,99€/mese fino al 30/09/2099. Portabilità entro il primo rinnovo.",
+            ),
+            (
+                "world-plus-5g",
+                "World Plus 5G",
+                "130",
+                9.99,
+                "Costo di attivazione 5€ per nuovi numeri, GRATIS in portabilità da tutti gli operatori",
+                "L’offerta World Plus 5G è attivabile al prezzo 9,99€/mese fino al 30/09/2099. Portabilità entro il primo rinnovo; 20GB dal 3° rinnovo consecutivo.",
+            ),
+            (
+                "flash-5g-320-lim-edition",
+                "Flash 5G 320 Limited Edition",
+                "320",
+                4.99,
+                "Costo di attivazione GRATUITO in portabilità da TUTTI GLI OPERATORI, 10€ per le nuove SIM",
+                "L’offerta è attivabile al prezzo 4,99€/mese per il primo mese, 8,99€ dal secondo mese e un ulteriore mese omaggio al completamento del primo rinnovo fino al 30/09/2099. Il credito viene erogato immediatamente dopo il primo rinnovo e non da diritto ad alcun rimborso. Portabilità entro il primo rinnovo.",
+            ),
+        ] {
+            let url = format!("https://www.unomobile.it/offerte/{slug}");
+            let bundle = serde_json::json!({
+                "name": name,
+                "publish": 1,
+                "price": price,
+                "data": data,
+                "overview": "Offerta valida fino al 30/09/2099 per nuovi numeri",
+                "activation_info": activation,
+                "note": note,
+            });
+            let html = format!("<script>window.bundle = {bundle};</script>");
+            let offer = parse_unomobile_extra(source, &url, slug, &html).unwrap();
+            assert_eq!(offer.name, name);
+            assert_eq!(offer.monthly_price, Some(price));
+            assert_eq!(offer.valid_until.as_deref(), Some("2099-09-30"));
+            assert!(offer.first_year_cost.is_none());
+            assert!(is_product_url(source.name, &url, "internet"));
+            assert!(parse_unomobile_extra(
+                source,
+                &url,
+                slug,
+                &html.replace(&format!("\"price\":{price}"), "\"price\":1")
+            )
+            .is_err());
+            assert!(parse_unomobile_extra(
+                source,
+                &url,
+                slug,
+                &html.replace("entro il primo rinnovo", "dopo il rinnovo")
+            )
+            .is_err());
+            if slug == "flash-5g-320-lim-edition" {
+                assert!(offer.conditions.iter().any(|c| c.contains("8.99")));
+                assert!(offer.conditions.iter().any(|c| c.contains("omaggio")));
+            }
+        }
+    }
+
+    #[test]
+    fn unomobile_catalog_and_xconnect_keep_iot_terms_distinct() {
+        let source = Source {
+            name: "1Mobile",
+            url: "https://www.unomobile.it/offerte/start-xplus-reward",
+        };
+        let catalog = r#"<script>const bundles = [{"url":"start-xplus-reward","publish":1},{"url":"xconnect","publish":1}];</script>"#;
+        let slugs = parse_unomobile_catalog(catalog).unwrap();
+        assert!(slugs.contains("xconnect"));
+        assert_eq!(slugs.len(), 2);
+        assert!(parse_unomobile_catalog(&catalog.replace("xconnect", "../unsafe")).is_err());
+        let url = "https://www.unomobile.it/offerte/xconnect";
+        let bundle = serde_json::json!({
+            "name": "XConnect", "url": "xconnect", "publish": 1, "price": 2.5,
+            "data": "1", "min": "100", "sms": "50",
+            "overview": "<p>Internet of things fino al 30/09/2099 Costo di attivazione 10€</p>",
+            "activation_info": "10€ Costo di attivazione",
+            "note": "L’offerta XConnect è attivabile al prezzo 2,50€/mese fino al 30/09/2099. La promozione si rinnova in automatico ogni mese."
+        });
+        let html = format!("<script>window.bundle = {bundle};</script>");
+        let offer = parse_unomobile_xconnect(source, url, &html).unwrap();
+        assert_eq!(offer.monthly_price, Some(2.5));
+        assert_eq!(offer.first_year_cost, None);
+        assert!(is_product_url(source.name, url, "internet"));
+        assert!(offer.description.contains("IoT"));
+        assert!(
+            parse_unomobile_xconnect(source, url, &html.replace("2,50€/mese", "3,50€/mese"))
+                .is_err()
+        );
+        assert!(parse_unomobile_xconnect(
+            source,
+            url,
+            &html.replace("attivazione 10€", "attivazione 5€")
+        )
+        .is_err());
+    }
+
+    #[test]
     fn ho_home_prices_stay_separate_by_customer_type() {
         let source = Source {
             name: "ho.",
@@ -1675,6 +2525,47 @@ mod tests {
         assert!(partial);
         assert_eq!(offers.len(), 1);
         assert_eq!(offers[0].name, "Vodafone Casa Start");
+    }
+
+    #[test]
+    fn vodafone_ultra_requires_public_price_technology_and_activation() {
+        let source = Source {
+            name: "Vodafone",
+            url: "https://privati.vodafone.it/casa/fibra",
+        };
+        let text = "Nome commerciale Casa Ultra Tecnologia di rete Fibra, FTTC, FITH \
+            Già clienti euro 0 0 Prezzo attiva: ne Nuovi clienti nativi euro 0 0 \
+            Nuovi clienti in portabilità euro 0 0 Prezzo Addebito flat a regime \
+            Il prezzo dell’offerta è pari a 36,95€ al mese.";
+        let offer = parse_vodafone_ultra_text(
+            source,
+            "https://www.vodafone.it/privati/area-supporto/contratti-aggiornamenti/condizioni-generali-reti-servizi/tariffe/contratti-attivabili/casa-ultra.html",
+            "https://www.vodafone.it/Casa_Ultra.pdf",
+            text,
+        )
+        .unwrap();
+        assert_eq!(offer.monthly_price, Some(36.95));
+        assert_eq!(offer.first_year_cost, None);
+        assert_eq!(offer.source_url, "https://www.vodafone.it/Casa_Ultra.pdf");
+        assert!(is_product_url(source.name, &offer.url, "internet"));
+        assert!(offer.conditions.iter().any(|c| c.contains("0 €")));
+        assert!(parse_vodafone_ultra_text(
+            source,
+            &offer.url,
+            &offer.source_url,
+            &text.replace(
+                "Nuovi clienti nativi euro 0 0",
+                "Nuovi clienti nativi euro 19 19"
+            )
+        )
+        .is_err());
+        assert!(parse_vodafone_ultra_text(
+            source,
+            &offer.url,
+            &offer.source_url,
+            &text.replace("36,95€", "-€")
+        )
+        .is_err());
     }
 
     #[test]

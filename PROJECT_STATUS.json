@@ -1,21 +1,15 @@
 {
-  "updatedAt": "2026-09-25",
+  "updatedAt": "2026-09-29",
   "scope": "Open document-comparison, offer coverage, verification and source-access work. Tasks are ordered by priority, then intended work order; blocked/external items require their stated prerequisite. Regression fixtures accompany each parser fix. Completed checks are recorded in docs/VERIFICATION.md, not retained here.",
+  "sourceStrategy": "Decision of 26 September: cover selected useful official sources, not every provider or offer. Do not schedule weekly checks or chase routine page and promotion changes. Maintain an adapter when a real failure affects supported offers; consider new providers or variants only for an explicit product priority and a sufficiently stable official source. Prefer official structured feeds or documents when available. If access or parsing fails, show the source warning and official link without inventing prices. On-demand data refresh does not imply weekly parser development.",
   "resume": {
-    "nextTask": "SOURCE-INTERNET-OTHER-VARIANTS",
-    "context": "The selected-source Internet breadth milestone is complete: 17 sources and 65 offers passed installed cache loading and live refresh. Vodafone Casa Start and Pro, 1Mobile Start XPlus Reward, two ho. home data variants, and three spusu mobile cards have scoped official-source adapters. Vodafone terms and further variants are tracked separately. Earlier Internet stalls did not recur; Allianz access and current comparison terms remain blocked or external.",
-    "verification": "Earlier 25 September checks passed 52 frontend tests, the focused browser cancellation regression and active native OCR cancellation; the local PDF cancellation left no Tesseract child. This pass completed 35 Rust tests, frontend build, strict Clippy, cargo formatting, focused spusu parser and live acquisition. The rebuilt and installed app loaded and refreshed 65 offers from 17 Internet sources, including three spusu cards, with no source errors or partial catalogs. The actual native picker and final all-category installed acceptance remain unverified.",
-    "handoff": "Local checkpoint 4dda79a is committed on master. Push is pending because this checkout has no configured Git remote; obtain the exact repository URL and push master. Next session: begin with SOURCE-INTERNET-OTHER-VARIANTS and check the current official 1Mobile and ho. product pages before editing adapters. Do not repeat either failed Vodafone Casa Ultra HTTP-card approach unchanged; SOURCE-VODAFONE-TERMS records the PDF/prospectus route. Completed checks and commands are in docs/VERIFICATION.md.",
-    "localData": "The original test-bolletta-pdf directory is local-only and gitignored. Do not commit its PDF, OCR text or page images. Existing blocked scratch cleanup is tracked separately; keep the machine network active."
+    "nextTask": "DOCUMENT-PICKER-NATIVE",
+    "context": "The packaged release executable loaded and refreshed 76 Internet offers from 17 sources, including Vodafone Casa Ultra and all seven published 1Mobile catalog cards. Very redirects the native client to Radware validation and WINDTRE returns a Radware block page, so those catalogs remain access-dependent. Final all-category acceptance remains open because Allianz returned HTTP 403.",
+    "verification": "On 29 September, baseline re-verification passed 40 Rust library tests, 52 frontend tests, 16 Playwright browser tests, frontend production build, strict Clippy and Cargo formatting. Live source acquisition across all 17 Internet sources retrieved 76 complete offers without errors or timeouts. Authorised targeted cleanup of .scratch removed all leftover test directories and page renders. The actual native picker and final all-category installed acceptance remain unverified.",
+    "handoff": "Session handoff on 29 September 2026: work committed on master. SCRATCH-FAILED-RUN was resolved by deleting leftover scratch directories and page renders; .scratch is clean. The remaining document-picker task needs an interactive Windows UI-capable session and an anonymized PDF. Investigate the intermittent Internet timeout only on a recurrence with recorded timings. Do not periodically recheck Very, WINDTRE or Allianz; apply sourceStrategy before expanding coverage.",
+    "localData": "The original test-bolletta-pdf directory is local-only and gitignored. Do not commit its PDF, OCR text or page images. Keep the machine network active."
   },
   "tasks": [
-    {
-      "id": "SCRATCH-FAILED-RUN",
-      "priority": "high",
-      "status": "blocked",
-      "summary": "Five verified leftover directories remain. The three older directories are: .scratch/desktop-check-j13DSt, .scratch/bill-review-5dd5ea744af84a08ac2c1c2b932600bc (rendered bill pages with personal information), and .scratch/bill-native-CNZg5S (isolated WebView test profile). On 2026-09-24 automatic approval review rejected both scoped recursive cleanup and explicit deletion of the five rendered PNG files with \"blocked by policy\". Scoped cleanup of this session .scratch/ocr-build (public build artifacts) and .scratch/source-review (public source HTML) was also rejected by automatic approval review on 24 September with blocked by policy; both remain. On 25 September, automatic approval review also rejected deletion of this session synthetic-only .scratch/installed-ocr-synthetic.png with blocked by policy; this file remains.",
-      "nextStep": "Use an approved cleanup path for the five exact directories and the single artificial PNG listed above, prioritizing the older personal page images. Do not repeat rejected actions unchanged or bypass policy. Preserve original PDFs and unrelated data."
-    },
     {
       "id": "SOURCE-INTERNET-NATIVE-TIMEOUT",
       "priority": "high",
@@ -31,25 +25,18 @@
       "nextStep": "Obtain the applicable current terms or renewal notice and the candidate's economic terms. Review prices, inclusions and the supported period before confirming dates. Do not infer twelve-month validity from continuation text or catalog subscription deadlines."
     },
     {
-      "id": "SOURCE-VODAFONE-TERMS",
-      "priority": "high",
-      "status": "pending",
-      "summary": "Vodafone's public home Internet page shows Casa Ultra at 36.95 €/month, and the official 14 September contract summary confirms that monthly amount for fixed Internet. Its structured product card is marked isShowedInHub=false while Casa Start and Pro are true. The native HTTP HTML has no visible Casa Ultra text because the site renders it in the browser. Two scoped adapter attempts returned a strict partial catalog and were reverted. The current official support page links a tariff prospectus for FTTH/FTTC, but the hub also mentions FWA and activation by technology; coverage and eligibility remain address-dependent.",
-      "nextStep": "Use the current official Casa Ultra contract summary and tariff prospectus linked from https://www.vodafone.it/privati/area-supporto/contratti-aggiornamenti/condizioni-generali-reti-servizi/tariffe/contratti-attivabili/casa-ultra.html to design a live, source-verified FTTH/FTTC adapter. Do not hardcode a static price or treat the hidden hydrated card as visible; keep FWA/activation and address eligibility explicit."
-    },
-    {
       "id": "SOURCE-ALLIANZ-ACCESS",
       "priority": "high",
       "status": "external",
       "summary": "The installed-app acceptance run on 24 September passed electricity, gas and all thirteen Internet sources, then failed strictly because Allianz returned HTTP 403; Bene returned seven offers. Both initial retrieval and refresh failed for Allianz. This is not a passing all-category acceptance run.",
-      "nextStep": "Recheck only when official source access changes, without bypassing access challenges. Keep the source warning and official link; complete final all-category acceptance once all sources are available."
+      "nextStep": "No scheduled rechecks. Revisit only if the user prioritizes Allianz or a stable official public source becomes available, without bypassing access challenges. Keep the source warning and official link; complete final all-category acceptance only when all required sources are available."
     },
     {
-      "id": "SOURCE-INTERNET-OTHER-VARIANTS",
+      "id": "SOURCE-INTERNET-VERY-WINDTRE",
       "priority": "medium",
-      "status": "pending",
-      "summary": "The installed app covers 17 selected Internet sources and 65 offers, not the whole market. Other 1Mobile and ho. products have not been reviewed; WINDTRE and Very public catalogs still present access challenges. AGCOM registration is not an offer catalog.",
-      "nextStep": "Review additional official 1Mobile and ho. product pages where complete current conditions are readable. Keep challenged catalogs as official links with explicit unavailability. Separate subscription deadlines from twelve-month price validity."
+      "status": "external",
+      "summary": "The app covers 17 selected Internet sources and 76 offers in the 26 September packaged-release check, not the whole market. Very redirects the native source client to Radware validation, which the app's same-host redirect policy rejects; WINDTRE returned a Radware Block Page. Very's public page may expose product links to other clients, but those cannot be used to bypass its challenge for the app. Its structured date was also stale on an earlier review. AGCOM registration is not an offer catalog.",
+      "nextStep": "No scheduled rechecks or weekly offer tracking. Revisit a provider only for an explicit product priority and stable official access without a validation challenge; then review terms and maintenance cost before adding an adapter. Keep official links and explicit unavailability while blocked."
     },
     {
       "id": "DOCUMENT-QUOTE-END-TO-END",

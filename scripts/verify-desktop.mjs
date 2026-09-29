@@ -179,15 +179,25 @@ try {
       assert.equal(enel.length, 6);
       assert.ok(enel.every((offer) => offer.monthlyPrice > 0 && offer.firstYearCost === null));
       const vodafone = snapshot.find((source) => source.source === 'Vodafone').offers;
-      assert.equal(vodafone.length, 2);
+      assert.equal(vodafone.length, 3);
       assert.ok(vodafone.every((offer) => offer.monthlyPrice > 0 && offer.firstYearCost === null));
+      const ultra = vodafone.find((offer) => offer.name === 'Vodafone Casa Ultra');
+      assert.ok(ultra?.sourceUrl.endsWith('/Casa_Ultra.pdf'));
+      assert.equal(ultra.monthlyPrice, 36.95);
       const unomobile = snapshot.find((source) => source.source === '1Mobile').offers;
-      assert.equal(unomobile.length, 1);
-      assert.ok(unomobile[0].monthlyPrice > 0);
-      assert.equal(unomobile[0].firstYearCost, null);
+      assert.equal(unomobile.length, 7);
+      assert.deepEqual(
+        unomobile.map((offer) => offer.name).sort(),
+        ['Flash 120', 'Flash 5G 320 Limited Edition', 'Speed 5G 180', 'Speed 5G 250', 'Start XPlus Reward', 'World Plus 5G', 'XConnect'],
+      );
+      assert.ok(unomobile.every((offer) => offer.monthlyPrice > 0 && offer.firstYearCost === null));
+      assert.equal(unomobile.find((offer) => offer.name === 'XConnect')?.monthlyPrice, 2.5);
       const ho = snapshot.find((source) => source.source === 'ho.').offers;
-      assert.equal(ho.length, 2);
-      assert.deepEqual(ho.map((offer) => offer.monthlyPrice).sort((a, b) => a - b), [12.95, 14.95]);
+      assert.equal(ho.length, 6);
+      assert.deepEqual(
+        ho.map((offer) => offer.monthlyPrice).sort((a, b) => a - b),
+        [6.95, 8.95, 9.95, 11.95, 12.95, 14.95],
+      );
       assert.ok(ho.every((offer) => offer.firstYearCost === null));
       const spusu = snapshot.find((source) => source.source === 'spusu').offers;
       assert.equal(spusu.length, 3);

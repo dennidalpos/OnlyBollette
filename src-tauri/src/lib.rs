@@ -111,11 +111,13 @@ async fn search_offers(
     drop(searches);
     let registry = state.searches.clone();
     let db = state.data.join("offers.sqlite");
+    let runtime = state.runtime.clone();
     tauri::async_runtime::spawn(async move {
         let mut queue = tokio::task::JoinSet::new();
         for source in sources {
             let category = category.clone();
-            queue.spawn(async move { sources::fetch(source, &category).await });
+            let runtime = runtime.clone();
+            queue.spawn(async move { sources::fetch(source, &category, &runtime).await });
         }
         loop {
             let next = tokio::select! {_=cancel.cancelled()=>{queue.abort_all();break},item=queue.join_next()=>item};
