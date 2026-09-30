@@ -18,6 +18,7 @@ import {
   LoaderCircle,
   Moon,
   Search,
+  ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -29,6 +30,7 @@ import {
 } from 'lucide-react';
 import type {
   Category,
+  ContractAnalysis,
   Highlights,
   ModelProgress,
   ModelStatus,
@@ -138,7 +140,10 @@ export default function App() {
   const [progress, setProgress] = useState<ModelProgress | null>(null);
   const [aiError, setAiError] = useState('');
   const [highlights, setHighlights] = useState<Highlights | null>(null);
+  const [contractAnalysis, setContractAnalysis] = useState<ContractAnalysis | null>(null);
   const [thinking, setThinking] = useState(false);
+  const [analyzingRisks, setAnalyzingRisks] = useState(false);
+  const [fetchRemoteTerms, setFetchRemoteTerms] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const activeRequest = useRef('');
   const loadingRef = useRef<HTMLDivElement>(null);
@@ -316,10 +321,13 @@ export default function App() {
   }
   function selectOffer(offer: Offer | null) {
     ++aiEpoch.current;
-    if (thinking) void call('cancel_ai').catch((e) => setAiError(errorText(e)));
+    if (thinking || analyzingRisks) void call('cancel_ai').catch((e) => setAiError(errorText(e)));
     setSelected(offer);
     setHighlights(null);
+    setContractAnalysis(null);
+    setFetchRemoteTerms(false);
     setThinking(false);
+    setAnalyzingRisks(false);
     setAiError('');
   }
 
@@ -356,6 +364,28 @@ export default function App() {
       if (epoch === aiEpoch.current) setAiError(errorText(e));
     } finally {
       if (epoch === aiEpoch.current) setThinking(false);
+    }
+  }
+
+  async function analyzeRisks() {
+    if (!selected) return;
+    if (!model.installed) {
+      setSettings(true);
+      return;
+    }
+    const epoch = ++aiEpoch.current;
+    setAnalyzingRisks(true);
+    setAiError('');
+    try {
+      const result = await call<ContractAnalysis>('offer_contract_risks', {
+        offerId: selected.id,
+        fetchDocument: fetchRemoteTerms,
+      });
+      if (epoch === aiEpoch.current) setContractAnalysis(result);
+    } catch (e) {
+      if (epoch === aiEpoch.current) setAiError(errorText(e));
+    } finally {
+      if (epoch === aiEpoch.current) setAnalyzingRisks(false);
     }
   }
 
@@ -1180,29 +1210,17 @@ export default function App() {
                   <section className="ai-panel">
                     <div className="ai-panel-title">
                       <Sparkles size={18} />
-                      <h3>Punti chiave</h3>
+                      <h3>Analisi AI locale</h3>
                       <span>AI locale</span>
                     </div>
                     <p>
-                      L’AI seleziona passaggi della fonte. Ogni citazione viene verificata sul testo
+                      L’AI seleziona passaggi della fonte contrattuale. Ogni citazione viene verificata sul testo
                       acquisito.
                     </p>
-                    {highlights ? (
-                      <>
-                        <ul>
-                          {highlights.quotes.map((q, i) => (
-                            <li key={i}>{q}</li>
-                          ))}
-                        </ul>
-                        <small>
-                          Elaborazione locale ·{' '}
-                          {highlights.backend === 'cpu' ? 'CPU' : 'GPU Vulkan'}
-                        </small>
-                      </>
-                    ) : (
+                    <div className="ai-panel-actions">
                       <button
-                        className="button primary"
-                        disabled={thinking || model.downloading || selected.evidenceVersion !== 1}
+                        className={`button ${highlights && !contractAnalysis ? 'primary' : 'secondary'}`}
+                        disabled={thinking || analyzingRisks || model.downloading || selected.evidenceVersion !== 1}
                         onClick={() => void summarize()}
                       >
                         {thinking ? (
@@ -1213,12 +1231,82 @@ export default function App() {
                         ) : (
                           <>
                             <Sparkles size={15} />
-                            {model.installed ? 'Evidenzia i punti chiave' : 'Attiva AI gratuita'}
+                            {model.installed ? 'Evidenzia punti chiave' : 'Attiva AI gratuita'}
                           </>
                         )}
                       </button>
+                      <button
+                        className={`button ${contractAnalysis ? 'primary' : 'secondary'}`}
+                        disabled={thinking || analyzingRisks || model.downloading || selected.evidenceVersion !== 1}
+                        onClick={() => void analyzeRisks()}
+                      >
+                        {analyzingRisks ? (
+                          <>
+                            <LoaderCircle size={15} className="spin" />
+                            Analisi rischi…
+                          </>
+                        ) : (
+                          <>
+                            <ShieldAlert size={15} />
+                            Rischi e clausole
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {(selected.url || selected.sourceUrl) && (
+                      <label className="ai-remote-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={fetchRemoteTerms}
+                          disabled={thinking || analyzingRisks}
+                          onChange={(e) => setFetchRemoteTerms(e.target.checked)}
+                        />
+                        Scarica e analizza anche il documento contrattuale collegato (
+                        {(selected.url || selected.sourceUrl).toLowerCase().includes('.pdf')
+                          ? 'PDF'
+                          : 'Web'}
+                        )
+                      </label>
                     )}
-                    {thinking && (
+
+                    {highlights && (
+                      <div className="ai-highlights-result">
+                        <ul>
+                          {highlights.quotes.map((q, i) => (
+                            <li key={i}>{q}</li>
+                          ))}
+                        </ul>
+                        <small>
+                          Elaborazione locale ·{' '}
+                          {highlights.backend === 'cpu' ? 'CPU' : 'GPU Vulkan'}
+                        </small>
+                      </div>
+                    )}
+
+                    {contractAnalysis && (
+                      <div className="ai-risks-result">
+                        <div className="ai-risk-list">
+                          {contractAnalysis.risks.map((risk, i) => (
+                            <div key={i} className={`ai-risk-item severity-${risk.severity}`}>
+                              <div className="ai-risk-header">
+                                <span className="ai-risk-category">{risk.category}</span>
+                                <span className={`ai-risk-badge severity-${risk.severity}`}>
+                                  {risk.severity === 'alto' ? 'Rischio Alto' : risk.severity === 'medio' ? 'Attenzione' : 'Nota'}
+                                </span>
+                              </div>
+                              <p className="ai-risk-quote">“{risk.quote}”</p>
+                            </div>
+                          ))}
+                        </div>
+                        <small>
+                          Elaborazione locale ({contractAnalysis.sourceType === 'documento_pdf' ? 'documento PDF' : contractAnalysis.sourceType === 'pagina_web' ? 'pagina web' : 'scheda ufficiale'}) ·{' '}
+                          {contractAnalysis.backend === 'cpu' ? 'CPU' : 'GPU Vulkan'}
+                        </small>
+                      </div>
+                    )}
+
+                    {(thinking || analyzingRisks) && (
                       <button
                         className="text-button"
                         onClick={() =>

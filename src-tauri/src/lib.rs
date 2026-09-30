@@ -6,6 +6,7 @@ pub mod providers;
 pub mod sources;
 mod store;
 
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -265,6 +266,136 @@ async fn offer_highlights(
 }
 
 #[tauri::command]
+async fn offer_contract_risks(
+    state: tauri::State<'_, AppState>,
+    offer_id: String,
+    fetch_document: bool,
+) -> Result<domain::ContractAnalysis, String> {
+    let db = state.data.join("offers.sqlite");
+    let offer = store::find(&db, &offer_id)?;
+    let (evidence, source_type) = if fetch_document {
+        let target_url = if domain::web_url(&offer.url).is_ok() {
+            Some(offer.url.as_str())
+        } else if domain::web_url(&offer.source_url).is_ok() {
+            Some(offer.source_url.as_str())
+        } else {
+            None
+        };
+        if let Some(url) = target_url {
+            let client = sources::client()?;
+            match sources::fetch_bytes(&client, url, 15 * 1024 * 1024).await {
+                Ok(bytes) => {
+                    let lower_url = url.to_lowercase();
+                    let is_pdf = lower_url.ends_with(".pdf")
+                        || lower_url.contains(".pdf?")
+                        || bytes.starts_with(b"%PDF");
+                    let ext = if is_pdf { "pdf" } else { "html" };
+                    if is_pdf {
+                        let cancel = CancellationToken::new();
+                        match documents::analyze_bytes(
+                            &bytes,
+                            ext,
+                            offer.name.clone(),
+                            &state.runtime,
+                            &cancel,
+                        ) {
+                            Ok(analysis) if analysis.readable && !analysis.pages.is_empty() => {
+                                let text = analysis
+                                    .pages
+                                    .into_iter()
+                                    .map(|p| p.text)
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                if !text.trim().is_empty() {
+                                    (text, "documento_pdf".to_string())
+                                } else {
+                                    (
+                                        offer.source_evidence()?.to_string(),
+                                        "scheda_offerta".to_string(),
+                                    )
+                                }
+                            }
+                            _ => (
+                                offer.source_evidence()?.to_string(),
+                                "scheda_offerta".to_string(),
+                            ),
+                        }
+                    } else {
+                        let html = String::from_utf8_lossy(&bytes);
+                        let doc = scraper::Html::parse_document(&html);
+                        let mut text_parts = Vec::new();
+                        for node in doc.tree.nodes() {
+                            if let Some(text) = node.value().as_text() {
+                                let in_script_or_style = node
+                                    .parent()
+                                    .and_then(|p| p.value().as_element())
+                                    .is_some_and(|el| {
+                                        matches!(el.name(), "script" | "style" | "noscript" | "svg")
+                                    });
+                                if !in_script_or_style {
+                                    let trimmed = text.trim();
+                                    if !trimmed.is_empty() {
+                                        text_parts.push(trimmed);
+                                    }
+                                }
+                            }
+                        }
+                        let text = text_parts.join(" ");
+                        if !text.trim().is_empty() {
+                            (text, "pagina_web".to_string())
+                        } else {
+                            (
+                                offer.source_evidence()?.to_string(),
+                                "scheda_offerta".to_string(),
+                            )
+                        }
+                    }
+                }
+                Err(_) => (
+                    offer.source_evidence()?.to_string(),
+                    "scheda_offerta".to_string(),
+                ),
+            }
+        } else {
+            (
+                offer.source_evidence()?.to_string(),
+                "scheda_offerta".to_string(),
+            )
+        }
+    } else {
+        (
+            offer.source_evidence()?.to_string(),
+            "scheda_offerta".to_string(),
+        )
+    };
+
+    let summary_id = format!("{}:risks", offer.id);
+    let evidence_hash = format!("{:x}", Sha256::digest(evidence.as_bytes()));
+    let cache_key = format!("contract-risks-v1:{source_type}:{evidence_hash}");
+    if let Some(cached) = store::cached_summary(&db, &summary_id, &cache_key)? {
+        if let Ok(saved) = serde_json::from_str::<domain::ContractAnalysis>(&cached) {
+            if let Ok(valid) = ai::validate_risks(&cached, &evidence, &saved.backend, &source_type)
+            {
+                return Ok(valid);
+            }
+        }
+    }
+
+    let result = state
+        .ai
+        .contract_risks(&state.runtime, &state.data, &evidence, &source_type)
+        .await?;
+
+    let _ = store::save_summary(
+        &db,
+        &summary_id,
+        &cache_key,
+        &serde_json::to_string(&result).map_err(|e| e.to_string())?,
+    );
+    Ok(result)
+}
+
+#[tauri::command]
 fn open_link(url: String) -> Result<(), String> {
     domain::web_url(&url)?;
     open::that_detached(url).map_err(|e| e.to_string())
@@ -312,6 +443,7 @@ pub fn run() {
             cancel_download,
             cancel_ai,
             offer_highlights,
+            offer_contract_risks,
             open_link
         ])
         .build(tauri::generate_context!())

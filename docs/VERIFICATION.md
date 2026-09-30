@@ -83,6 +83,30 @@ The native `verify-document` executable also rejected a missing file, an artific
 - Baseline verification re-run: 40 Rust library tests, 52 frontend tests, 16 Playwright browser tests, frontend production build, strict Clippy and Cargo formatting passed with zero regressions.
 - Live acquisition check via `cargo run --manifest-path src-tauri/Cargo.toml --example verify-sources -- internet` acquired all 76 offers across all 17 supported Internet sources without timeouts or errors.
 
+### AI contract risk and clause analysis — 29 September 2026
+
+- Added local AI-powered contract risk synthesis (`src-tauri/src/ai.rs`, `offer_contract_risks` IPC command). The engine extracts potential traps, penalties, lock-in terms, and hidden renewal costs with classified severity levels (*Alto*, *Medio*, *Basso*).
+- Remote document ingestion: supports downloading connected contractual prospectuses (PDF) or web terms up to 15 MB in memory using `sources::fetch_bytes` and `documents::analyze_bytes`, without writing any document bytes, text, or OCR extracts to disk or logs. HTML parsing strips script, style, noscript, and svg tags to deliver clean contractual text.
+- Full document scanning: `risk_passages` scans all sentences across multi-page documents to prioritize risk keywords without dropping clauses located beyond initial pages.
+- Zero-hallucination guarantee: model outputs passage IDs mapped strictly to verbatim quotations verified against the original text (`evidence.contains(&quote)`). Any fabricated or hallucinated quote is immediately rejected by the validator. Markdown-fenced JSON responses are safely normalized.
+- Non-conflicting caching: results are cached in the SQLite `summaries` table under scoped row IDs (`{offer_id}:risks`) and SHA-256 hashed evidence keys (`contract-risks-v1:{source_type}:{hash}`), preventing collisions with key-point highlights.
+- Diagnostic CLI: `src-tauri/examples/verify-ai.rs` updated to execute and verify both key highlights and contract risks against live acquired offers.
+- Verification results:
+  - 45 Rust library tests passed (`cargo test --manifest-path src-tauri/Cargo.toml --lib`), including unit tests for risk passage prioritization, deep document sentence scanning, schema resolution, markdown fences, and rejection of hallucinated quotes.
+  - Strict Clippy passed with 0 warnings (`cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`).
+  - Cargo formatting check passed (`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`).
+  - All 52 Vitest frontend tests passed (`npm test`).
+  - Production TypeScript build passed (`npm run build`).
+  - All 17 Playwright browser tests passed (`npx playwright test`), including the new automated test exercising the AI contract risk workflow, severity badges, and modal reset.
+
+### NSIS setup package generation & OCR fixture DPI resolution — 29 September 2026
+
+- `pwsh -NoProfile -File scripts/build-installer.ps1` built the official NSIS installer `src-tauri/target/release/bundle/nsis/OnlyBollette_0.1.0_x64-setup.exe` incorporating the new AI contract risk & clause analysis features.
+- Silent installation (`OnlyBollette_0.1.0_x64-setup.exe /S`) verified clean deployment to `C:\Users\Utente\AppData\Local\OnlyBollette\onlybollette.exe`.
+- Synthetic document generator (`scripts/create-document-fixture.ps1`) updated to explicitly set 96 DPI resolution (`$bitmap.SetResolution(96, 96)`), preventing column and text collisions on displays configured with custom scaling (e.g. 150% / 144 DPI).
+- `node scripts/verify-document-layout.mjs` passed end-to-end: verified native OCR and frontend comparison, layout parsing, profile fields, multi-period component rows, repeated blocks, printed validity, and session-only memory isolation.
+
+
 Run these commands to verify the codebase against baseline:
 
 ```powershell
@@ -92,11 +116,12 @@ npm test
 # Production build type-check and bundling
 npm run build
 
-# UI and workflow tests via Playwright (16 tests)
+# UI and workflow tests via Playwright (17 tests)
 npx playwright test
 
 # Rust backend tests
 cargo test --manifest-path src-tauri/Cargo.toml --lib
+
 
 # Strict Rust linter
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings

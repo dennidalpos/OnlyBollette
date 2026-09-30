@@ -63,6 +63,20 @@ async fn main() -> Result<(), String> {
     for q in result.quotes {
         println!("  {q}");
     }
+    let risks_start = std::time::Instant::now();
+    let risks = engine
+        .contract_risks(&root, &data, offer.source_evidence()?, "scheda_offerta")
+        .await?;
+    println!(
+        "{}: {} verified contract risks, backend={}, {:.1}s",
+        offer.name,
+        risks.risks.len(),
+        risks.backend,
+        risks_start.elapsed().as_secs_f32()
+    );
+    for r in risks.risks {
+        println!("  [{}] {} -> \"{}\"", r.severity, r.category, r.quote);
+    }
     engine.shutdown();
     Ok(())
 }

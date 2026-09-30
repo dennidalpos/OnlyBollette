@@ -54,6 +54,22 @@ pub struct ElectricityParameters {
     pub fetched_at: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClauseRisk {
+    pub quote: String,
+    pub category: String,
+    pub severity: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContractAnalysis {
+    pub risks: Vec<ClauseRisk>,
+    pub backend: String,
+    pub source_type: String,
+}
+
 impl Offer {
     pub fn source_evidence(&self) -> Result<&str, String> {
         if self.evidence_version != 1 {

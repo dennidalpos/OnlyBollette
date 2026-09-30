@@ -46,6 +46,23 @@ The **Confronta con il tuo contratto** tool (`src/comparisonDocuments.ts`, `src/
    - Indexed offers, bioraria/multioraria contracts, gas, and insurance require complete annual quotes or personal estimates.
    - Historical billed totals are never treated as forward 12-month projections.
 
+## AI Contract Risk & Terms Analysis
+
+The **Rischi e clausole** analysis (`src-tauri/src/ai.rs`, `offer_contract_risks` IPC) inspects contract terms, prospectuses, or offer conditions to detect potential consumer risks such as lock-in clauses, exit penalties, renewal rate shifts, and hidden extra fees:
+
+1. **In-Memory Acquisition**:
+   - When requested with the *Scarica e analizza termini completi* option, the backend attempts to fetch connected contractual documents (PDF prospectuses or web pages) up to 15 MB via `sources::fetch_bytes`.
+   - Text is extracted strictly in memory using `documents::analyze_bytes` or HTML parsing; downloaded bytes and extracts are **never** persisted to disk, SQLite, logs, or external AI services.
+   - If remote terms are unavailable or unselected, the analysis operates on the offer's verified `evidence` text.
+2. **Zero-Hallucination Grounding**:
+   - Input text is segmented into candidate passages prioritized by contractual risk terms (`recesso`, `penale`, `vincolo`, `disattivazione`, `durata`, `variazione`, `aumento`, `franchigia`).
+   - The local model (`llama-server` / Qwen 2.5 2B) returns structured JSON linking identified risks to specific `passageId` numbers.
+   - The backend validates that every returned quotation is an exact verbatim substring (`evidence.contains(&quote)`); fabricated or mismatched quotations are discarded.
+3. **Categorization & Severity**:
+   - Risks are classified into severity tiers (*Alto*, *Medio*, *Basso*) across standard contractual dimensions (e.g. Recesso e Vincoli, Costi di Disattivazione, Variazioni Tariffarie, Condizioni di Rinnovo).
+4. **Caching & Provenance**:
+   - Analysis results are cached in the SQLite `summaries` table under `contract-risks-v1:{source_type}\n{evidence}`, ensuring fast subsequent loads while retaining data provenance.
+
 ## Cache Freshness & Failure Lifecycle
 
 - Offers and parameters are stored in SQLite and considered stale after 24 hours.

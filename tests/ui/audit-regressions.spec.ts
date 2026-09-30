@@ -7,6 +7,7 @@ interface AuditWindow extends Window {
   auditCalls: string[];
   auditSources: string[];
   auditFailOcr: boolean;
+  auditModelInstalled?: boolean;
   auditResolveDocument: (document: DocumentAnalysis) => void;
   auditEmit: (completed: number) => void;
   auditEmitResult: (result: SourceResult, done: boolean) => void;
@@ -40,7 +41,30 @@ test.beforeEach(async ({ page }) => {
           return id;
         }
         if (command === 'plugin:event|unlisten') return;
-        if (command === 'model_status') return { installed: false, downloading: false, size: 1 };
+        if (command === 'model_status')
+          return { installed: !!mock.auditModelInstalled, downloading: false, size: 1 };
+        if (command === 'offer_contract_risks')
+          return {
+            risks: [
+              {
+                category: 'Penale o costo di recesso',
+                severity: 'alto',
+                quote: 'Recesso entro 24 mesi comporta addebito di 49 euro.',
+              },
+              {
+                category: 'Vincolo o durata minima',
+                severity: 'medio',
+                quote: 'Durata contrattuale minima 24 mesi.',
+              },
+            ],
+            backend: 'cpu',
+            sourceType: 'scheda_offerta',
+          };
+        if (command === 'offer_highlights')
+          return {
+            quotes: ['Nessun vincolo contrattuale.', 'Assistenza inclusa.'],
+            backend: 'cpu',
+          };
         if (command === 'source_names') return mock.auditSources;
         if (command === 'plugin:dialog|open') return 'C:\\synthetic.pdf';
         if (command === 'analyze_document') {
@@ -374,4 +398,32 @@ test('manual insurance data can recover from OCR failure with explicit provenanc
   await field(page, 'Premio annuo · proposta').fill('450');
   await page.getByRole('button', { name: 'Conferma dati', exact: true }).click();
   await expect(page.getByRole('checkbox', { name: /Ho trascritto i dati/ })).not.toBeChecked();
+});
+
+test('AI contract risk analysis displays categorized risks with severity badges and resets on dialog close', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as unknown as AuditWindow).auditModelInstalled = true;
+  });
+  await page.goto('/');
+  await page.locator('.category-card.internet').click();
+  await expect(page.locator('.offer-card')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Dettagli' }).first().click();
+  await expect(page.locator('.dialog.offer-dialog')).toBeVisible();
+  await expect(page.getByRole('button', { name: /Rischi e clausole/ })).toBeVisible();
+  await page.getByRole('button', { name: /Rischi e clausole/ }).click();
+  await expect(page.locator('.ai-risks-result')).toBeVisible();
+  await expect(page.locator('.ai-risk-item')).toHaveCount(2);
+  await expect(page.locator('.ai-risk-badge.severity-alto')).toHaveText('Rischio Alto');
+  await expect(page.locator('.ai-risk-badge.severity-medio')).toHaveText('Attenzione');
+  await expect(page.locator('.ai-risk-item').first()).toContainText('Recesso entro 24 mesi');
+  await expect(page.locator('.ai-risks-result small')).toContainText(
+    'Elaborazione locale (scheda ufficiale) · CPU',
+  );
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.dialog.offer-dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Dettagli' }).first().click();
+  await expect(page.locator('.dialog.offer-dialog')).toBeVisible();
+  await expect(page.locator('.ai-risks-result')).toHaveCount(0);
 });

@@ -2,6 +2,7 @@ param([Parameter(Mandatory)][string]$OutputPath, [switch]$ComponentBlocks, [swit
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $bitmap = [System.Drawing.Bitmap]::new(1800, 2100)
+$bitmap.SetResolution(96, 96)
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 $font = [System.Drawing.Font]::new('Arial', 24)
 $smallFont = [System.Drawing.Font]::new('Arial', 17)

@@ -76,3 +76,13 @@ export interface Highlights {
   quotes: string[];
   backend: string;
 }
+export interface ClauseRisk {
+  quote: string;
+  category: string;
+  severity: 'alto' | 'medio' | 'basso';
+}
+export interface ContractAnalysis {
+  risks: ClauseRisk[];
+  backend: string;
+  sourceType: string;
+}
