@@ -1,16 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
-import { ElectricityComparison, EstimateDetails } from './ElectricityComparison';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ElectricityComparison } from './ElectricityComparison';
 import { DocumentComparison } from './DocumentComparison';
+import { MultiFilter } from './MultiFilter';
+import { OfferCard } from './OfferCard';
+import { ModelSettingsDialog } from './ModelSettingsDialog';
+import { OfferDetailsDialog } from './OfferDetailsDialog';
 import { estimateElectricity, parametersError } from './electricity';
 import type { ElectricityEstimate, ElectricityProfile } from './electricity';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import * as Dialog from '@radix-ui/react-dialog';
 import {
-  ArrowDownToLine,
   ArrowLeft,
   ArrowRight,
-  Check,
   ChevronDown,
   ExternalLink,
   Flame,
@@ -18,14 +19,12 @@ import {
   LoaderCircle,
   Moon,
   Search,
-  ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Square,
   Sun,
   Wifi,
-  X,
   Zap,
 } from 'lucide-react';
 import type {
@@ -40,24 +39,19 @@ import type {
   SourceResult,
 } from './types';
 import {
-  bandLabels,
   categoryNames,
   dateTime,
   filterOffers,
   inPriceRange,
   mergeSource,
-  money,
   offerActivation,
   offerDuration,
-  offerMarket,
   offerPayment,
   offerTariff,
-  priceLabels,
   priceRangeError,
   sourceStatus,
   subcategories,
 } from './catalog';
-import type { SourceStatus } from './catalog';
 
 const icons = { luce: Zap, gas: Flame, internet: Wifi, assicurazioni: ShieldCheck };
 const categorySubtitles = {
@@ -74,20 +68,6 @@ const sourceNames = {
 };
 const portal = 'https://www.ilportaleofferte.it/portaleOfferte/';
 const placetGuide = 'https://www.arera.it/consumatori/offerte-standard-per-i-clienti-finali-placet';
-const statusLabels: Record<SourceStatus, string> = {
-  fresh: 'Acquisito',
-  saved: 'Salvato',
-  stale: 'Da aggiornare',
-  partial: 'Parziale',
-};
-const priceDescriptions: Record<string, string> = {
-  fixed:
-    'Il prezzo della componente energia resta fisso per la durata delle condizioni economiche.',
-  variable: 'Il prezzo segue un indice: gli importi mostrati possono essere solo spread e quote.',
-  other: 'La formula di prezzo va verificata nelle condizioni ufficiali.',
-  advertised: 'Canone pubblicizzato: copertura, attivazione e requisiti vanno verificati.',
-  quote: 'Il premio dipende dal profilo e richiede un preventivo personale.',
-};
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (!isTauri())
@@ -389,76 +369,137 @@ export default function App() {
     }
   }
 
-  const filteredOffers = filterOffers(sources, {
-    query,
-    subcategory,
-    priceTypes,
-    markets,
-    durations,
-    tariffs,
-    activations,
-    payments,
-    restrictions,
-    providers,
-    sort,
-  });
+  const filteredOffers = useMemo(
+    () =>
+      filterOffers(sources, {
+        query,
+        subcategory,
+        priceTypes,
+        markets,
+        durations,
+        tariffs,
+        activations,
+        payments,
+        restrictions,
+        providers,
+        sort,
+      }),
+    [
+      sources,
+      query,
+      subcategory,
+      priceTypes,
+      markets,
+      durations,
+      tariffs,
+      activations,
+      payments,
+      restrictions,
+      providers,
+      sort,
+    ],
+  );
   const electricitySource = sources.find((s) => s.source === 'Portale Offerte');
   const electricityParameters = electricitySource?.electricityParameters;
-  const estimates = new Map<string, ElectricityEstimate>();
-  if (
-    category === 'luce' &&
-    electricityProfile &&
-    electricityParameters &&
-    !electricitySource?.calculationError &&
-    !parametersError(electricityParameters)
-  ) {
-    for (const offer of filteredOffers) {
-      const estimate = estimateElectricity(offer, electricityParameters, electricityProfile);
-      if (estimate) estimates.set(offer.id, estimate);
+
+  const estimates = useMemo(() => {
+    const map = new Map<string, ElectricityEstimate>();
+    if (
+      category === 'luce' &&
+      electricityProfile &&
+      electricityParameters &&
+      !electricitySource?.calculationError &&
+      !parametersError(electricityParameters)
+    ) {
+      for (const offer of filteredOffers) {
+        const estimate = estimateElectricity(offer, electricityParameters, electricityProfile);
+        if (estimate) map.set(offer.id, estimate);
+      }
     }
-  }
-  const rankedOffers =
-    category === 'luce' && electricityProfile
-      ? [...filteredOffers]
-          .filter((offer) => estimates.has(offer.id))
-          .sort((a, b) => estimates.get(a.id)!.total - estimates.get(b.id)!.total)
-      : filteredOffers;
+    return map;
+  }, [
+    category,
+    electricityProfile,
+    electricityParameters,
+    electricitySource?.calculationError,
+    filteredOffers,
+  ]);
+
+  const rankedOffers = useMemo(() => {
+    if (category === 'luce' && electricityProfile) {
+      return [...filteredOffers]
+        .filter((offer) => estimates.has(offer.id))
+        .sort((a, b) => estimates.get(a.id)!.total - estimates.get(b.id)!.total);
+    }
+    return filteredOffers;
+  }, [category, electricityProfile, filteredOffers, estimates]);
+
   const canFilterPrice = category === 'internet' || (category === 'luce' && !!electricityProfile);
   const priceError = priceRangeError(priceFrom, priceTo);
-  const offers =
-    canFilterPrice && !priceError
-      ? rankedOffers.filter((offer) =>
-          inPriceRange(
-            category === 'luce' ? estimates.get(offer.id)?.total : offer.monthlyPrice,
-            priceFrom,
-            priceTo,
-          ),
-        )
-      : rankedOffers;
-  const allCount = sources.reduce((n, s) => n + s.offers.length, 0);
-  const allOffers = sources.flatMap((source) => source.offers);
-  const providerOptions = [...new Set(allOffers.map((offer) => offer.provider))]
-    .sort((a, b) => a.localeCompare(b, 'it'))
-    .map((value): [string, string] => [value, value]);
-  const durationOptions = [...new Set(allOffers.map(offerDuration))]
-    .sort((a, b) => (a === 'unknown' ? 1 : b === 'unknown' ? -1 : Number(a) - Number(b)))
-    .map((value): [string, string] => [
-      value,
-      value === 'unknown' ? 'Non indicata' : `${value} mesi`,
-    ]);
-  const tariffOptions = [...new Set(allOffers.map(offerTariff))].map((value): [string, string] => [
-    value,
-    { mono: 'Monoraria', bio: 'Bioraria', unknown: 'Non indicata' }[value] ?? value,
-  ]);
-  const activationOptions = [...new Set(allOffers.flatMap(offerActivation))]
-    .sort((a, b) => a.localeCompare(b, 'it'))
-    .map((value): [string, string] => [
-      value,
-      value === 'unknown' ? 'Non indicata' : value.replace(/^Offerta attivabile /, ''),
-    ]);
-  const paymentOptions = [...new Set(allOffers.flatMap(offerPayment))]
-    .sort((a, b) => a.localeCompare(b, 'it'))
-    .map((value): [string, string] => [value, value === 'unknown' ? 'Non indicata' : value]);
+
+  const offers = useMemo(() => {
+    if (canFilterPrice && !priceError) {
+      return rankedOffers.filter((offer) =>
+        inPriceRange(
+          category === 'luce' ? estimates.get(offer.id)?.total : offer.monthlyPrice,
+          priceFrom,
+          priceTo,
+        ),
+      );
+    }
+    return rankedOffers;
+  }, [canFilterPrice, priceError, rankedOffers, category, estimates, priceFrom, priceTo]);
+
+  const allOffers = useMemo(() => sources.flatMap((source) => source.offers), [sources]);
+  const allCount = allOffers.length;
+
+  const providerOptions = useMemo(
+    () =>
+      [...new Set(allOffers.map((offer) => offer.provider))]
+        .sort((a, b) => a.localeCompare(b, 'it'))
+        .map((value): [string, string] => [value, value]),
+    [allOffers],
+  );
+
+  const durationOptions = useMemo(
+    () =>
+      [...new Set(allOffers.map(offerDuration))]
+        .sort((a, b) => (a === 'unknown' ? 1 : b === 'unknown' ? -1 : Number(a) - Number(b)))
+        .map((value): [string, string] => [
+          value,
+          value === 'unknown' ? 'Non indicata' : `${value} mesi`,
+        ]),
+    [allOffers],
+  );
+
+  const tariffOptions = useMemo(
+    () =>
+      [...new Set(allOffers.map(offerTariff))].map((value): [string, string] => [
+        value,
+        { mono: 'Monoraria', bio: 'Bioraria', unknown: 'Non indicata' }[value] ?? value,
+      ]),
+    [allOffers],
+  );
+
+  const activationOptions = useMemo(
+    () =>
+      [...new Set(allOffers.flatMap(offerActivation))]
+        .sort((a, b) => a.localeCompare(b, 'it'))
+        .map((value): [string, string] => [
+          value,
+          value === 'unknown' ? 'Non indicata' : value.replace(/^Offerta attivabile /, ''),
+        ]),
+    [allOffers],
+  );
+
+  const paymentOptions = useMemo(
+    () =>
+      [...new Set(allOffers.flatMap(offerPayment))]
+        .sort((a, b) => a.localeCompare(b, 'it'))
+        .map((value): [string, string] => [value, value === 'unknown' ? 'Non indicata' : value]),
+    [allOffers],
+  );
+
   const selectedFilterCount = [
     priceTypes,
     markets,
@@ -1108,342 +1149,37 @@ export default function App() {
           </main>
         )}
 
-        <Dialog.Root
-          open={!!selected}
-          onOpenChange={(open) => {
-            if (!open) selectOffer(null);
-          }}
-        >
-          <Dialog.Portal>
-            <Dialog.Overlay className="dialog-overlay" />
-            <Dialog.Content className="dialog offer-dialog">
-              {selected && (
-                <>
-                  <Dialog.Close className="icon-button close" aria-label="Chiudi dettagli">
-                    <X size={20} />
-                  </Dialog.Close>
-                  <span className="eyebrow">{selected.provider}</span>
-                  <Dialog.Title>{selected.name}</Dialog.Title>
-                  <Dialog.Description>
-                    {selected.description || 'Condizioni e informazioni dalla fonte ufficiale.'}
-                  </Dialog.Description>
-                  <div className="detail-tags">
-                    <span
-                      className={`tag price-${selected.priceType}`}
-                      title={priceDescriptions[selected.priceType]}
-                    >
-                      {priceLabels[selected.priceType]}
-                    </span>
-                    {offerMarket(selected) === 'placet' && (
-                      <span
-                        className="tag placet"
-                        title="Condizioni standard ARERA, prezzo scelto dal venditore"
-                      >
-                        PLACET
-                      </span>
-                    )}
-                    <span className={`data-status ${selectedStatus}`}>
-                      {statusLabels[selectedStatus]}
-                    </span>
-                    {selected.validUntil && (
-                      <span>
-                        Valida fino al{' '}
-                        {new Date(`${selected.validUntil}T12:00:00`).toLocaleDateString('it-IT')}
-                      </span>
-                    )}
-                  </div>
-                  <section className="reliability-note">
-                    <h3>Fonte e limiti</h3>
-                    <p>
-                      {selected.category === 'luce' || selected.category === 'gas'
-                        ? 'Componenti e condizioni provengono dai dati pubblicati dal Portale Offerte. Non rappresentano la spesa totale né confermano l’idoneità della tua fornitura.'
-                        : selected.category === 'internet'
-                          ? 'Canone e condizioni provengono dalle pagine del gestore. Copertura, promozioni e costi di attivazione richiedono conferma.'
-                          : 'La fonte descrive il prodotto. Il premio e le coperture applicabili richiedono un preventivo personale.'}
-                    </p>
-                    <p>
-                      Stato: {statusLabels[selectedStatus]} · acquisizione{' '}
-                      {dateTime(selected.fetchedAt)}. Verifica sempre l’offerta sul sito ufficiale
-                      prima di aderire.
-                    </p>
-                  </section>
-                  {estimates.has(selected.id) && electricityParameters && (
-                    <EstimateDetails
-                      estimate={estimates.get(selected.id)!}
-                      parameters={electricityParameters}
-                      open={(url) => void open(url)}
-                    />
-                  )}
-                  {!!selected.components.length && (
-                    <section>
-                      <h3>Componenti pubblicate</h3>
-                      <div className="component-table">
-                        {selected.components.map((c, i) => (
-                          <div key={i}>
-                            <span>
-                              {c.name}
-                              {c.band ? ` · ${bandLabels[c.band] ?? c.band}` : ''}
-                            </span>
-                            <strong>
-                              {money(
-                                c.amount,
-                                c.unit.includes('kWh') || c.unit.includes('Smc') ? 4 : 2,
-                              )}{' '}
-                              <small>{c.unit}</small>
-                            </strong>
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  )}
-                  {selected.monthlyPrice !== null && (
-                    <div className="detail-price">
-                      {money(selected.monthlyPrice)} € <span>/ mese · canone pubblicizzato</span>
-                    </div>
-                  )}
-                  {selected.firstYearCost !== null && (
-                    <p className="annual-cost">
-                      <strong>{money(selected.firstYearCost)} €</strong> per 12 canoni e attivazione
-                      SIM · extra esclusi
-                    </p>
-                  )}
-                  <section className="ai-panel">
-                    <div className="ai-panel-title">
-                      <Sparkles size={18} />
-                      <h3>Analisi AI locale</h3>
-                      <span>AI locale</span>
-                    </div>
-                    <p>
-                      L’AI seleziona passaggi della fonte contrattuale. Ogni citazione viene verificata sul testo
-                      acquisito.
-                    </p>
-                    <div className="ai-panel-actions">
-                      <button
-                        className={`button ${highlights && !contractAnalysis ? 'primary' : 'secondary'}`}
-                        disabled={thinking || analyzingRisks || model.downloading || selected.evidenceVersion !== 1}
-                        onClick={() => void summarize()}
-                      >
-                        {thinking ? (
-                          <>
-                            <LoaderCircle size={15} className="spin" />
-                            Analisi in corso…
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles size={15} />
-                            {model.installed ? 'Evidenzia punti chiave' : 'Attiva AI gratuita'}
-                          </>
-                        )}
-                      </button>
-                      <button
-                        className={`button ${contractAnalysis ? 'primary' : 'secondary'}`}
-                        disabled={thinking || analyzingRisks || model.downloading || selected.evidenceVersion !== 1}
-                        onClick={() => void analyzeRisks()}
-                      >
-                        {analyzingRisks ? (
-                          <>
-                            <LoaderCircle size={15} className="spin" />
-                            Analisi rischi…
-                          </>
-                        ) : (
-                          <>
-                            <ShieldAlert size={15} />
-                            Rischi e clausole
-                          </>
-                        )}
-                      </button>
-                    </div>
+        <OfferDetailsDialog
+          selected={selected}
+          onClose={() => selectOffer(null)}
+          selectedStatus={selectedStatus}
+          estimate={selected ? estimates.get(selected.id) : undefined}
+          electricityParameters={electricityParameters}
+          model={model}
+          highlights={highlights}
+          contractAnalysis={contractAnalysis}
+          thinking={thinking}
+          analyzingRisks={analyzingRisks}
+          fetchRemoteTerms={fetchRemoteTerms}
+          onFetchRemoteTermsChange={setFetchRemoteTerms}
+          aiError={aiError}
+          onSummarize={() => void summarize()}
+          onAnalyzeRisks={() => void analyzeRisks()}
+          onCancelAi={() => void call('cancel_ai').catch((e) => setAiError(errorText(e)))}
+          openUrl={(url) => void open(url)}
+        />
 
-                    {(selected.url || selected.sourceUrl) && (
-                      <label className="ai-remote-checkbox">
-                        <input
-                          type="checkbox"
-                          checked={fetchRemoteTerms}
-                          disabled={thinking || analyzingRisks}
-                          onChange={(e) => setFetchRemoteTerms(e.target.checked)}
-                        />
-                        Scarica e analizza anche il documento contrattuale collegato (
-                        {(selected.url || selected.sourceUrl).toLowerCase().includes('.pdf')
-                          ? 'PDF'
-                          : 'Web'}
-                        )
-                      </label>
-                    )}
-
-                    {highlights && (
-                      <div className="ai-highlights-result">
-                        <ul>
-                          {highlights.quotes.map((q, i) => (
-                            <li key={i}>{q}</li>
-                          ))}
-                        </ul>
-                        <small>
-                          Elaborazione locale ·{' '}
-                          {highlights.backend === 'cpu' ? 'CPU' : 'GPU Vulkan'}
-                        </small>
-                      </div>
-                    )}
-
-                    {contractAnalysis && (
-                      <div className="ai-risks-result">
-                        <div className="ai-risk-list">
-                          {contractAnalysis.risks.map((risk, i) => (
-                            <div key={i} className={`ai-risk-item severity-${risk.severity}`}>
-                              <div className="ai-risk-header">
-                                <span className="ai-risk-category">{risk.category}</span>
-                                <span className={`ai-risk-badge severity-${risk.severity}`}>
-                                  {risk.severity === 'alto' ? 'Rischio Alto' : risk.severity === 'medio' ? 'Attenzione' : 'Nota'}
-                                </span>
-                              </div>
-                              <p className="ai-risk-quote">“{risk.quote}”</p>
-                            </div>
-                          ))}
-                        </div>
-                        <small>
-                          Elaborazione locale ({contractAnalysis.sourceType === 'documento_pdf' ? 'documento PDF' : contractAnalysis.sourceType === 'pagina_web' ? 'pagina web' : 'scheda ufficiale'}) ·{' '}
-                          {contractAnalysis.backend === 'cpu' ? 'CPU' : 'GPU Vulkan'}
-                        </small>
-                      </div>
-                    )}
-
-                    {(thinking || analyzingRisks) && (
-                      <button
-                        className="text-button"
-                        onClick={() =>
-                          void call('cancel_ai').catch((e) => setAiError(errorText(e)))
-                        }
-                      >
-                        Annulla
-                      </button>
-                    )}
-                    {aiError && (
-                      <p role="alert" className="inline-error">
-                        {aiError}
-                      </p>
-                    )}
-                    {selected.evidenceVersion !== 1 && (
-                      <p role="status">
-                        Aggiorna le offerte per acquisire il testo della fonte prima dell’analisi
-                        AI.
-                      </p>
-                    )}
-                  </section>
-                  <section>
-                    <h3>Da sapere</h3>
-                    <ul className="conditions">
-                      {selected.conditions.map((c, i) => (
-                        <li key={i}>{c}</li>
-                      ))}
-                    </ul>
-                  </section>
-                  <details className="source-details">
-                    <summary>Testo acquisito dalla fonte</summary>
-                    <p>
-                      {selected.evidenceVersion === 1
-                        ? selected.evidence
-                        : 'Testo di una versione precedente: aggiorna le offerte per verificarne la provenienza.'}
-                    </p>
-                  </details>
-                  <div className="detail-source">
-                    <span>
-                      {selected.source} · {dateTime(selected.fetchedAt)}
-                    </span>
-                    <button onClick={() => void open(selected.sourceUrl)}>
-                      Fonte dati <ExternalLink size={13} />
-                    </button>
-                  </div>
-                  <button
-                    className="button primary full-width"
-                    onClick={() => void open(selected.url)}
-                  >
-                    Vai al sito ufficiale <ExternalLink size={16} />
-                  </button>
-                </>
-              )}
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
-
-        <Dialog.Root open={settings} onOpenChange={setSettings}>
-          <Dialog.Portal>
-            <Dialog.Overlay className="dialog-overlay" />
-            <Dialog.Content className="dialog model-dialog">
-              <Dialog.Close className="icon-button close" aria-label="Chiudi impostazioni AI">
-                <X size={20} />
-              </Dialog.Close>
-              <span className="model-icon">
-                <Sparkles size={26} />
-              </span>
-              <Dialog.Title>La tua AI, sul tuo PC.</Dialog.Title>
-              <Dialog.Description>
-                Gratuita, senza account e senza chiavi API. Il modello viene scaricato una volta e
-                lavora in locale.
-              </Dialog.Description>
-              <div className="model-spec">
-                <strong>Qwen3.5 · 2B</strong>
-                <span>1,4 GB · Apache 2.0</span>
-                <p>Le offerte arrivano dalle fonti online. L’AI aiuta a leggerne le condizioni.</p>
-              </div>
-              {model.downloading && (
-                <div className="download-progress">
-                  <div>
-                    <span>{progress?.stage ?? 'Preparazione download…'}</span>
-                    <span>{Math.round(((progress?.downloaded ?? 0) / model.size) * 100)}%</span>
-                  </div>
-                  <progress max={model.size} value={progress?.downloaded ?? 0} />
-                </div>
-              )}
-              {model.installed ? (
-                <div className="model-ready">
-                  <Check size={18} />
-                  Modello pronto all’uso
-                </div>
-              ) : (
-                <button
-                  className="button primary full-width"
-                  disabled={model.downloading}
-                  onClick={() => void download()}
-                >
-                  {model.downloading ? (
-                    <>
-                      <LoaderCircle className="spin" size={16} />
-                      Download in corso
-                    </>
-                  ) : (
-                    <>
-                      <ArrowDownToLine size={17} />
-                      Scarica e attiva AI
-                    </>
-                  )}
-                </button>
-              )}
-              {model.downloading && (
-                <button
-                  className="text-button"
-                  onClick={() =>
-                    void call('cancel_download').catch((e) => setAiError(errorText(e)))
-                  }
-                >
-                  Sospendi download
-                </button>
-              )}
-              {model.installed && !model.downloading && (
-                <button className="text-button" onClick={() => void download()}>
-                  Verifica o ripara il modello
-                </button>
-              )}
-              {aiError && (
-                <p role="alert" className="inline-error">
-                  {aiError}
-                </p>
-              )}
-              <p className="model-note">
-                Puoi continuare a consultare le offerte durante il download. Il modello richiede
-                memoria aggiuntiva durante l’uso.
-              </p>
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
+        <ModelSettingsDialog
+          open={settings}
+          onOpenChange={setSettings}
+          model={model}
+          progress={progress}
+          aiError={aiError}
+          onDownload={() => void download()}
+          onCancelDownload={() =>
+            void call('cancel_download').catch((e) => setAiError(errorText(e)))
+          }
+        />
       </div>
       {busy && (
         <div className="update-overlay">
@@ -1497,199 +1233,5 @@ export default function App() {
         </div>
       )}
     </>
-  );
-}
-
-function MultiFilter({
-  title,
-  hint,
-  options,
-  selected,
-  onToggle,
-  searchable = false,
-}: {
-  title: string;
-  hint?: string;
-  options: [string, string][];
-  selected: string[];
-  onToggle: (value: string) => void;
-  searchable?: boolean;
-}) {
-  const [search, setSearch] = useState('');
-  const details = useRef<HTMLDetailsElement>(null);
-  const menu = useRef<HTMLDivElement>(null);
-  function positionMenu() {
-    if (!details.current?.open || !menu.current) return;
-    if (window.innerWidth <= 850) {
-      menu.current.style.left = '';
-      return;
-    }
-    const anchor = details.current.getBoundingClientRect();
-    const width = menu.current.offsetWidth;
-    const left = Math.max(12, Math.min(anchor.left, window.innerWidth - width - 12));
-    menu.current.style.left = `${left - anchor.left}px`;
-  }
-  useEffect(() => {
-    const closeOutside = (event: PointerEvent) => {
-      if (details.current?.open && !details.current.contains(event.target as Node)) {
-        details.current.open = false;
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && details.current?.open) details.current.open = false;
-    };
-    document.addEventListener('pointerdown', closeOutside);
-    document.addEventListener('keydown', closeOnEscape);
-    window.addEventListener('resize', positionMenu);
-    return () => {
-      document.removeEventListener('pointerdown', closeOutside);
-      document.removeEventListener('keydown', closeOnEscape);
-      window.removeEventListener('resize', positionMenu);
-    };
-  }, []);
-  const visible = searchable
-    ? options.filter(([, label]) =>
-        label.toLocaleLowerCase('it').includes(search.toLocaleLowerCase('it')),
-      )
-    : options;
-  return (
-    <details
-      className="multi-filter"
-      ref={details}
-      onToggle={(event) => {
-        if (event.currentTarget.open) requestAnimationFrame(positionMenu);
-      }}
-    >
-      <summary>
-        {title}
-        {selected.length > 0 && <span className="filter-count">{selected.length}</span>}
-      </summary>
-      <div className="multi-filter-menu" ref={menu}>
-        {hint && <p className="filter-hint">{hint}</p>}
-        {searchable && (
-          <input
-            aria-label={`Cerca ${title.toLocaleLowerCase('it')}`}
-            placeholder="Cerca…"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-        )}
-        {visible.length ? (
-          visible.map(([value, label]) => (
-            <label key={value}>
-              <input
-                type="checkbox"
-                checked={selected.includes(value)}
-                onChange={() => onToggle(value)}
-              />
-              <span>{label}</span>
-            </label>
-          ))
-        ) : (
-          <p>Nessuna opzione disponibile</p>
-        )}
-      </div>
-    </details>
-  );
-}
-
-function OfferCard({
-  offer,
-  estimate,
-  status,
-  onSelect,
-}: {
-  offer: Offer;
-  estimate?: ElectricityEstimate;
-  status: SourceStatus;
-  onSelect: () => void;
-}) {
-  const components = offer.components.slice(0, 2);
-  return (
-    <article className="offer-card">
-      <div className="provider-avatar">
-        {offer.provider.replace('www.', '').slice(0, 2).toUpperCase()}
-      </div>
-      <div className="offer-content">
-        <div className="offer-topline">
-          <span
-            className={`tag price-${offer.priceType}`}
-            title={priceDescriptions[offer.priceType]}
-          >
-            {priceLabels[offer.priceType]}
-          </span>
-          {offerMarket(offer) === 'placet' && (
-            <span
-              className="tag placet"
-              title="Condizioni standard ARERA, prezzo scelto dal venditore"
-            >
-              PLACET
-            </span>
-          )}
-        </div>
-        <span className="provider-name">{offer.provider}</span>
-        <h2>
-          <button onClick={onSelect}>{offer.name}</button>
-        </h2>
-        <p className="offer-description">
-          {offer.description || 'Scopri le condizioni sul sito ufficiale.'}
-        </p>
-        {offer.restricted && (
-          <span className="restriction">Requisiti di accesso da verificare</span>
-        )}
-        <div className="offer-source">
-          <Info size={12} />
-          {offer.source} <span>·</span> {dateTime(offer.fetchedAt)}
-          <span className={`data-status ${status}`}>{statusLabels[status]}</span>
-        </div>
-      </div>
-      <div className="offer-price">
-        {estimate ? (
-          <>
-            <strong>
-              {money(estimate.total)} <small>€ / anno</small>
-            </strong>
-            <span>Stima PLACET · imposte incluse</span>
-          </>
-        ) : offer.monthlyPrice !== null ? (
-          <>
-            <strong>
-              {money(offer.monthlyPrice)} <small>€</small>
-            </strong>
-            <span>al mese, condizioni da verificare</span>
-          </>
-        ) : components.length ? (
-          <>
-            {components.map((c, i) => (
-              <div className="mini-component" key={i}>
-                <strong>
-                  {money(c.amount, c.unit.includes('kWh') || c.unit.includes('Smc') ? 4 : 2)}{' '}
-                  <small>{c.unit}</small>
-                </strong>
-                <span>
-                  {c.name}
-                  {c.band ? ` · ${bandLabels[c.band] ?? c.band}` : ''}
-                </span>
-              </div>
-            ))}
-            <span className="component-note">
-              {offer.priceType === 'variable'
-                ? 'Spread e quote · indice escluso'
-                : 'Componenti di vendita'}
-            </span>
-          </>
-        ) : (
-          <>
-            <strong className="quote-price">
-              {offer.category === 'assicurazioni' ? 'Su preventivo' : 'Consulta prezzo'}
-            </strong>
-            <span>Sul sito ufficiale</span>
-          </>
-        )}
-        <button className="details-button" onClick={onSelect}>
-          Dettagli <ArrowRight size={15} />
-        </button>
-      </div>
-    </article>
   );
 }

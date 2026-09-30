@@ -97,7 +97,27 @@ The native `verify-document` executable also rejected a missing file, an artific
   - Cargo formatting check passed (`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`).
   - All 52 Vitest frontend tests passed (`npm test`).
   - Production TypeScript build passed (`npm run build`).
-  - All 17 Playwright browser tests passed (`npx playwright test`), including the new automated test exercising the AI contract risk workflow, severity badges, and modal reset.
+### Architectural simplification & performance optimization — 30 September 2026
+
+- Frontend modularization: `src/App.tsx` decomposed into focused, reusable components:
+  - `src/MultiFilter.tsx`: Encapsulates multi-select dropdown filters with search, keyboard navigation, outside-click listener, and viewport-aware repositioning.
+  - `src/OfferCard.tsx`: Dedicated card rendering for offers with prices, components, and provenance badges.
+  - `src/ModelSettingsDialog.tsx`: Local AI model status, download progress, verification, and repair dialog.
+  - `src/OfferDetailsDialog.tsx`: Offer details, component breakdown, estimate details, and AI key highlights / contract risk analysis.
+  - Reduced `App.tsx` by ~450 lines, eliminating monolithic re-rendering.
+- Performance optimization (`useMemo`):
+  - In `src/App.tsx`, filter option sets (`providerOptions`, `durationOptions`, `tariffOptions`, `activationOptions`, `paymentOptions`) and electricity `estimates` are now wrapped in `useMemo`, eliminating expensive multi-pass `Set` allocations across 2,000–4,000 offers on routine input and timer updates.
+- SQLite query optimization (`src-tauri/src/store.rs`):
+  - `store::find(path, id)` now queries `WHERE instr(payload, ?1) > 0` directly in SQLite C-level substring matching before deserializing, bypassing full JSON deserialization of multi-megabyte unrelated category snapshots.
+- Deduplication (`src-tauri/src/lib.rs`):
+  - Centralized `extract_clean_html_text` and `fetch_contract_evidence` helpers, simplifying `offer_contract_risks` by eliminating duplicate fallback branches.
+- Verification results:
+  - 45 Rust library tests passed (`cargo test --manifest-path src-tauri/Cargo.toml --lib`).
+  - Strict Clippy passed with 0 warnings (`cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`).
+  - Cargo formatting check passed (`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`).
+  - All 52 Vitest frontend tests passed (`npm test`).
+  - Production TypeScript build passed (`npm run build`).
+  - All 17 Playwright browser tests passed (`npx playwright test`).
 
 ### NSIS setup package generation & OCR fixture DPI resolution — 29 September 2026
 

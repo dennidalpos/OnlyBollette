@@ -45,6 +45,22 @@ export function mergeSource(current: SourceResult[], next: SourceResult): Source
 
 export type SourceStatus = 'fresh' | 'saved' | 'stale' | 'partial';
 
+export const statusLabels: Record<SourceStatus, string> = {
+  fresh: 'Acquisito',
+  saved: 'Salvato',
+  stale: 'Da aggiornare',
+  partial: 'Parziale',
+};
+
+export const priceDescriptions: Record<string, string> = {
+  fixed:
+    'Il prezzo della componente energia resta fisso per la durata delle condizioni economiche.',
+  variable: 'Il prezzo segue un indice: gli importi mostrati possono essere solo spread e quote.',
+  other: 'La formula di prezzo va verificata nelle condizioni ufficiali.',
+  advertised: 'Canone pubblicizzato: copertura, attivazione e requisiti vanno verificati.',
+  quote: 'Il premio dipende dal profilo e richiede un preventivo personale.',
+};
+
 export function sourceStatus(source: SourceResult | undefined, now = Date.now()): SourceStatus {
   if (!source || source.error) return 'stale';
   const fetched = Date.parse(source.fetchedAt);

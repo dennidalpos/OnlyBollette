@@ -44,11 +44,12 @@ pub fn load(path: &Path, category: &str) -> Result<Vec<SourceResult>, String> {
 
 pub fn find(path: &Path, id: &str) -> Result<Offer, String> {
     let db = connect(path)?;
+    let pattern = format!("\"id\":\"{id}\"");
     let mut stmt = db
-        .prepare("SELECT payload FROM snapshots")
+        .prepare("SELECT payload FROM snapshots WHERE instr(payload, ?1) > 0")
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([], |r| r.get::<_, String>(0))
+        .query_map(params![pattern], |r| r.get::<_, String>(0))
         .map_err(|e| e.to_string())?;
     for row in rows {
         let result: SourceResult =

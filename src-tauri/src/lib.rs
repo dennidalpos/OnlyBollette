@@ -265,6 +265,76 @@ async fn offer_highlights(
     Ok(result)
 }
 
+fn extract_clean_html_text(html: &str) -> String {
+    let doc = scraper::Html::parse_document(html);
+    let mut text_parts = Vec::new();
+    for node in doc.tree.nodes() {
+        if let Some(text) = node.value().as_text() {
+            let in_script_or_style = node
+                .parent()
+                .and_then(|p| p.value().as_element())
+                .is_some_and(|el| matches!(el.name(), "script" | "style" | "noscript" | "svg"));
+            if !in_script_or_style {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    text_parts.push(trimmed);
+                }
+            }
+        }
+    }
+    text_parts.join(" ")
+}
+
+async fn fetch_contract_evidence(
+    offer: &domain::Offer,
+    runtime: &std::path::Path,
+) -> Result<(String, String), String> {
+    let default_evidence = offer.source_evidence()?.to_string();
+    let target_url = [offer.url.as_str(), offer.source_url.as_str()]
+        .into_iter()
+        .find(|u| domain::web_url(u).is_ok());
+
+    let Some(url) = target_url else {
+        return Ok((default_evidence, "scheda_offerta".to_string()));
+    };
+    let Ok(client) = sources::client() else {
+        return Ok((default_evidence, "scheda_offerta".to_string()));
+    };
+    let Ok(bytes) = sources::fetch_bytes(&client, url, 15 * 1024 * 1024).await else {
+        return Ok((default_evidence, "scheda_offerta".to_string()));
+    };
+
+    let lower_url = url.to_lowercase();
+    let is_pdf =
+        lower_url.ends_with(".pdf") || lower_url.contains(".pdf?") || bytes.starts_with(b"%PDF");
+
+    if is_pdf {
+        let cancel = CancellationToken::new();
+        if let Ok(analysis) =
+            documents::analyze_bytes(&bytes, "pdf", offer.name.clone(), runtime, &cancel)
+        {
+            if analysis.readable && !analysis.pages.is_empty() {
+                let text = analysis
+                    .pages
+                    .into_iter()
+                    .map(|p| p.text)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !text.trim().is_empty() {
+                    return Ok((text, "documento_pdf".to_string()));
+                }
+            }
+        }
+    } else {
+        let text = extract_clean_html_text(&String::from_utf8_lossy(&bytes));
+        if !text.trim().is_empty() {
+            return Ok((text, "pagina_web".to_string()));
+        }
+    }
+
+    Ok((default_evidence, "scheda_offerta".to_string()))
+}
+
 #[tauri::command]
 async fn offer_contract_risks(
     state: tauri::State<'_, AppState>,
@@ -274,94 +344,7 @@ async fn offer_contract_risks(
     let db = state.data.join("offers.sqlite");
     let offer = store::find(&db, &offer_id)?;
     let (evidence, source_type) = if fetch_document {
-        let target_url = if domain::web_url(&offer.url).is_ok() {
-            Some(offer.url.as_str())
-        } else if domain::web_url(&offer.source_url).is_ok() {
-            Some(offer.source_url.as_str())
-        } else {
-            None
-        };
-        if let Some(url) = target_url {
-            let client = sources::client()?;
-            match sources::fetch_bytes(&client, url, 15 * 1024 * 1024).await {
-                Ok(bytes) => {
-                    let lower_url = url.to_lowercase();
-                    let is_pdf = lower_url.ends_with(".pdf")
-                        || lower_url.contains(".pdf?")
-                        || bytes.starts_with(b"%PDF");
-                    let ext = if is_pdf { "pdf" } else { "html" };
-                    if is_pdf {
-                        let cancel = CancellationToken::new();
-                        match documents::analyze_bytes(
-                            &bytes,
-                            ext,
-                            offer.name.clone(),
-                            &state.runtime,
-                            &cancel,
-                        ) {
-                            Ok(analysis) if analysis.readable && !analysis.pages.is_empty() => {
-                                let text = analysis
-                                    .pages
-                                    .into_iter()
-                                    .map(|p| p.text)
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                if !text.trim().is_empty() {
-                                    (text, "documento_pdf".to_string())
-                                } else {
-                                    (
-                                        offer.source_evidence()?.to_string(),
-                                        "scheda_offerta".to_string(),
-                                    )
-                                }
-                            }
-                            _ => (
-                                offer.source_evidence()?.to_string(),
-                                "scheda_offerta".to_string(),
-                            ),
-                        }
-                    } else {
-                        let html = String::from_utf8_lossy(&bytes);
-                        let doc = scraper::Html::parse_document(&html);
-                        let mut text_parts = Vec::new();
-                        for node in doc.tree.nodes() {
-                            if let Some(text) = node.value().as_text() {
-                                let in_script_or_style = node
-                                    .parent()
-                                    .and_then(|p| p.value().as_element())
-                                    .is_some_and(|el| {
-                                        matches!(el.name(), "script" | "style" | "noscript" | "svg")
-                                    });
-                                if !in_script_or_style {
-                                    let trimmed = text.trim();
-                                    if !trimmed.is_empty() {
-                                        text_parts.push(trimmed);
-                                    }
-                                }
-                            }
-                        }
-                        let text = text_parts.join(" ");
-                        if !text.trim().is_empty() {
-                            (text, "pagina_web".to_string())
-                        } else {
-                            (
-                                offer.source_evidence()?.to_string(),
-                                "scheda_offerta".to_string(),
-                            )
-                        }
-                    }
-                }
-                Err(_) => (
-                    offer.source_evidence()?.to_string(),
-                    "scheda_offerta".to_string(),
-                ),
-            }
-        } else {
-            (
-                offer.source_evidence()?.to_string(),
-                "scheda_offerta".to_string(),
-            )
-        }
+        fetch_contract_evidence(&offer, &state.runtime).await?
     } else {
         (
             offer.source_evidence()?.to_string(),
